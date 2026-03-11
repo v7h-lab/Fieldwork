@@ -18,6 +18,7 @@ export default function InterviewPage() {
     const [currentQuestion, setCurrentQuestion] = useState('');
     const [liveTranscript, setLiveTranscript] = useState('');
     const [isListening, setIsListening] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const [ttsEnabled, setTtsEnabled] = useState(true);
     const [interviewStartTime] = useState<number>(Date.now());
@@ -85,42 +86,14 @@ export default function InterviewPage() {
         mediaRecorderRef.current?.stop();
     }, []);
 
-    // Text-to-Speech using Gemini API
-    const speak = useCallback(async (text: string) => {
-        if (!ttsEnabled || typeof window === 'undefined') return;
-
-        try {
-            // Cancel current audio if any
-            if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current.currentTime = 0;
-            }
-
-            const res = await fetch('/api/tts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, voiceName: 'Kore' }),
-            });
-
-            if (!res.ok) throw new Error('TTS generation failed');
-
-            const { audio, mimeType } = await res.json();
-            const audioSrc = `data:${mimeType};base64,${audio}`;
-
-            const audioEl = new Audio(audioSrc);
-            audioRef.current = audioEl;
-            await audioEl.play();
-        } catch (error) {
-            console.error('Failed to play Gemini TTS:', error);
-            // Fallback to browser TTS if Gemini fails
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            const voices = window.speechSynthesis.getVoices();
-            const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google'));
-            if (preferred) utterance.voice = preferred;
-            window.speechSynthesis.speak(utterance);
+    const stopListening = useCallback(() => {
+        if (recognitionRef.current) {
+            recognitionRef.current.onend = null; // Prevent auto-restart loop if stopped manually
+            try { recognitionRef.current.stop(); } catch { /* ignore */ }
+            recognitionRef.current = null;
         }
-    }, [ttsEnabled]);
+        setIsListening(false);
+    }, []);
 
     // Speech recognition (live transcription)
     const startListening = useCallback(() => {
@@ -128,6 +101,12 @@ export default function InterviewPage() {
         const w = window as any;
         const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
         if (!Ctor) return;
+
+        // Clean up existing instance before starting a new one to avoid double-firing
+        if (recognitionRef.current) {
+            recognitionRef.current.onend = null;
+            try { recognitionRef.current.stop(); } catch { /* ignore */ }
+        }
 
         const recognition = new Ctor();
         recognition.continuous = true;
@@ -152,22 +131,70 @@ export default function InterviewPage() {
 
         recognition.onerror = () => { /* continue */ };
         recognition.onend = () => {
-            // Auto-restart if still listening
+            // Auto-restart if still listening natively closed it
             if (recognitionRef.current) {
                 try { recognition.start(); } catch { /* ignore */ }
             }
         };
 
         recognitionRef.current = recognition;
-        recognition.start();
+        try { recognition.start(); } catch { /* ignore */ }
         setIsListening(true);
     }, []);
 
-    const stopListening = useCallback(() => {
-        recognitionRef.current?.stop();
-        recognitionRef.current = null;
-        setIsListening(false);
-    }, []);
+    // Text-to-Speech using Gemini API
+    const speak = useCallback(async (text: string) => {
+        if (!ttsEnabled || typeof window === 'undefined') {
+            startListening();
+            return;
+        }
+
+        setIsSpeaking(true);
+        // CRITICAL: Mute the microphone immediately so it doesn't transcribe the AI's audio (echo)
+        stopListening();
+
+        try {
+            // Cancel current audio if any
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+            }
+
+            const res = await fetch('/api/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, voiceName: 'Aoede' }),
+            });
+
+            if (!res.ok) throw new Error('TTS generation failed');
+
+            const { audio, mimeType } = await res.json();
+            const audioSrc = `data:${mimeType};base64,${audio}`;
+
+            const audioEl = new Audio(audioSrc);
+            audioRef.current = audioEl;
+
+            audioEl.onended = () => {
+                setIsSpeaking(false);
+                startListening();
+            };
+
+            await audioEl.play();
+        } catch (error) {
+            console.error('Failed to play Gemini TTS:', error);
+            // Fallback to browser TTS if Gemini fails
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            const voices = window.speechSynthesis.getVoices();
+            const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google'));
+            if (preferred) utterance.voice = preferred;
+            utterance.onend = () => {
+                setIsSpeaking(false);
+                startListening();
+            };
+            window.speechSynthesis.speak(utterance);
+        }
+    }, [ttsEnabled, startListening]);
 
     // Get agent response
     const getAgentResponse = useCallback(async (currentMessages: TranscriptEntry[]) => {
@@ -248,10 +275,7 @@ export default function InterviewPage() {
         finalTranscriptRef.current = '';
 
         await getAgentResponse(updated);
-
-        // Auto-start listening for next answer
-        setTimeout(() => startListening(), 1500);
-    }, [liveTranscript, isSending, messages, interviewStartTime, getAgentResponse, stopListening, startListening]);
+    }, [liveTranscript, isSending, messages, interviewStartTime, getAgentResponse, stopListening]);
 
     // Interrupt AI speaking
     const interruptAgent = useCallback(() => {
@@ -260,6 +284,7 @@ export default function InterviewPage() {
             audioRef.current.currentTime = 0;
         }
         window.speechSynthesis?.cancel();
+        setIsSpeaking(false);
         startListening();
         // The user can now speak their interruption, and submit it normally.
     }, [startListening]);
@@ -298,11 +323,21 @@ export default function InterviewPage() {
         }
     };
 
-    const startInterview = async () => {
-        if (!participantName.trim()) return;
+    const startInterview = () => {
+        startCamera();
         setState('active');
-        await startCamera();
-        await getAgentResponse([]);
+
+        // Play a fast, immediate native greeting to mask the API latency of generating the first question
+        if (ttsEnabled && typeof window !== 'undefined' && window.speechSynthesis) {
+            const utterance = new SpeechSynthesisUtterance(`Hi ${participantName}, give me just a second to get ready.`);
+            const voices = window.speechSynthesis.getVoices();
+            const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google'));
+            if (preferred) utterance.voice = preferred;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Initial agent greeting
+        getAgentResponse([]);
         setTimeout(() => startListening(), 2000);
     };
 
@@ -494,7 +529,8 @@ export default function InterviewPage() {
                             {isListening ? <MicOff size={20} strokeWidth={1.5} /> : <Mic size={20} strokeWidth={1.5} />}
                         </button>
 
-                        {!isSending && !isListening && (
+                        {/* Interrupt button */}
+                        {(isSpeaking || isSending) && !isListening && (
                             <button
                                 className="btn"
                                 onClick={interruptAgent}

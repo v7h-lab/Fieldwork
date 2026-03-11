@@ -17,6 +17,7 @@ export default function InterviewPage() {
     const [messages, setMessages] = useState<TranscriptEntry[]>([]);
     const [currentQuestion, setCurrentQuestion] = useState('');
     const [liveTranscript, setLiveTranscript] = useState('');
+    const [activeMediaUrl, setActiveMediaUrl] = useState<string | null>(null);
     const [isListening, setIsListening] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isSending, setIsSending] = useState(false);
@@ -229,6 +230,23 @@ export default function InterviewPage() {
                 setMessages(updated);
                 setCurrentQuestion(data.message);
                 setQuestionCount(prev => prev + 1);
+
+                // Find if the current question corresponds to a mediaUrl in the guide
+                let foundMedia = null;
+                if (study?.guide) {
+                    const agentWords = new Set(data.message.toLowerCase().match(/\w+/g) || []);
+                    const allQuestions = [...study.guide.preScreen, ...study.guide.mainQuestions, ...study.guide.exitQuestions];
+                    for (const q of allQuestions) {
+                        if (!q.mediaUrl) continue;
+                        const qWords = new Set(q.text.toLowerCase().match(/\w+/g) || []);
+                        const intersection = new Set(Array.from(agentWords).filter(x => qWords.has(x as string)));
+                        if (intersection.size / qWords.size > 0.5) {
+                            foundMedia = q.mediaUrl;
+                            break;
+                        }
+                    }
+                }
+                setActiveMediaUrl(foundMedia);
 
                 // Read the question aloud
                 speak(data.message);
@@ -463,6 +481,14 @@ export default function InterviewPage() {
                                 {participantName.charAt(0).toUpperCase()}
                             </div>
                             <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.6)', marginTop: '12px' }}>{participantName}</span>
+                        </div>
+                    )}
+
+                    {/* Active Media Overlay */}
+                    {activeMediaUrl && (
+                        <div style={{ position: 'absolute', inset: 0, zIndex: 5, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={activeMediaUrl} alt="Concept Media" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                         </div>
                     )}
 

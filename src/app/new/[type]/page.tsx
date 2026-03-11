@@ -29,7 +29,6 @@ export default function NewStudyPage() {
     const [maxQuestions, setMaxQuestions] = useState(5);
     const [maxFollowUps, setMaxFollowUps] = useState(2);
     const [studyName, setStudyName] = useState('');
-    const [mediaUrls, setMediaUrls] = useState<string[]>([]);
     const [guide, setGuide] = useState<ResearchGuide | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState('');
@@ -46,7 +45,6 @@ export default function NewStudyPage() {
                     goals,
                     audience,
                     inputMethod,
-                    mediaUrls,
                     maxQuestions,
                     maxFollowUps,
                 }),
@@ -80,7 +78,6 @@ export default function NewStudyPage() {
             goals,
             audience,
             inputMethod,
-            mediaUrls,
             maxQuestions,
             maxFollowUps,
             guide,
@@ -108,6 +105,20 @@ export default function NewStudyPage() {
         } else {
             const arr = [...updated[section]];
             arr[idx] = { ...arr[idx], text };
+            updated[section] = arr;
+        }
+        setGuide(updated);
+    };
+
+    const updateQuestionMedia = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', idx: number, mediaUrl: string) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        if (section === 'mainQuestions') {
+            updated.mainQuestions = [...updated.mainQuestions];
+            updated.mainQuestions[idx] = { ...updated.mainQuestions[idx], mediaUrl };
+        } else {
+            const arr = [...updated[section]];
+            arr[idx] = { ...arr[idx], mediaUrl };
             updated[section] = arr;
         }
         setGuide(updated);
@@ -242,47 +253,6 @@ export default function NewStudyPage() {
                             />
                         </div>
 
-                        {researchType === 'concept' && (
-                            <div className="form-group" style={{ marginTop: 'var(--space-6)' }}>
-                                <label className="form-label">Concept Media (Optional)</label>
-                                <div className="form-hint" style={{ marginBottom: 'var(--space-2)', marginTop: 0 }}>
-                                    Add up to 5 images or prototypes to discuss during the session.
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
-                                        {mediaUrls.map((url, i) => (
-                                            <div key={i} style={{ position: 'relative', width: '80px', height: '80px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--neutral-200)' }}>
-                                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                <img src={url} alt={`Media ${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                <button
-                                                    onClick={() => setMediaUrls(urls => urls.filter((_, idx) => idx !== i))}
-                                                    className="btn btn-ghost btn-sm"
-                                                    style={{ position: 'absolute', top: 2, right: 2, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%' }}
-                                                >
-                                                    <X size={12} strokeWidth={2} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                        {mediaUrls.length < 5 && (
-                                            <label style={{ width: '80px', height: '80px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--neutral-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--neutral-400)', background: 'var(--neutral-50)', transition: 'all 0.2s ease' }} className="hover-bg-neutral-100">
-                                                <input
-                                                    type="file"
-                                                    accept="image/*"
-                                                    multiple
-                                                    style={{ display: 'none' }}
-                                                    onChange={(e) => {
-                                                        const files = Array.from(e.target.files || []);
-                                                        const newUrls = files.slice(0, 5 - mediaUrls.length).map(f => URL.createObjectURL(f));
-                                                        setMediaUrls(prev => [...prev, ...newUrls]);
-                                                    }}
-                                                />
-                                                <ImageIcon size={20} strokeWidth={1.5} />
-                                            </label>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                     </div>
                 )}
 
@@ -403,17 +373,32 @@ export default function NewStudyPage() {
                                         <div key={q.id}>
                                             <div className="guide-question">
                                                 <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                                                <div
-                                                    className="guide-question-text editable-text"
-                                                    contentEditable
-                                                    suppressContentEditableWarning
-                                                    onBlur={(e) => updateQuestionText('mainQuestions', i, e.currentTarget.textContent || '')}
-                                                >
-                                                    {q.text}
+                                                <div style={{ flex: 1 }}>
+                                                    <div
+                                                        className="guide-question-text editable-text"
+                                                        contentEditable
+                                                        suppressContentEditableWarning
+                                                        onBlur={(e) => updateQuestionText('mainQuestions', i, e.currentTarget.textContent || '')}
+                                                    >
+                                                        {q.text}
+                                                    </div>
+                                                    {q.mediaUrl && (
+                                                        <div style={{ marginTop: '8px', marginBottom: '8px', position: 'relative', width: 'fit-content' }}>
+                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                            <img src={q.mediaUrl} alt="Question Media" style={{ maxWidth: '200px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                                            <button onClick={() => updateQuestionMedia('mainQuestions', i, '')} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('mainQuestions', i)} title="Delete Question">
-                                                    <Trash2 size={14} strokeWidth={1.5} />
-                                                </button>
+                                                <div style={{ display: 'flex', gap: '4px' }}>
+                                                    <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
+                                                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) updateQuestionMedia('mainQuestions', i, URL.createObjectURL(e.target.files[0])); }} />
+                                                        <ImageIcon size={14} strokeWidth={1.5} />
+                                                    </label>
+                                                    <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('mainQuestions', i)} title="Delete Question">
+                                                        <Trash2 size={14} strokeWidth={1.5} />
+                                                    </button>
+                                                </div>
                                             </div>
                                             {q.followUps.map((fu, fi) => (
                                                 <div key={fi} className="guide-followup" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -452,17 +437,32 @@ export default function NewStudyPage() {
                                     {guide.exitQuestions.map((q, i) => (
                                         <div key={q.id} className="guide-question">
                                             <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                                            <div
-                                                className="guide-question-text editable-text"
-                                                contentEditable
-                                                suppressContentEditableWarning
-                                                onBlur={(e) => updateQuestionText('exitQuestions', i, e.currentTarget.textContent || '')}
-                                            >
-                                                {q.text}
+                                            <div style={{ flex: 1 }}>
+                                                <div
+                                                    className="guide-question-text editable-text"
+                                                    contentEditable
+                                                    suppressContentEditableWarning
+                                                    onBlur={(e) => updateQuestionText('exitQuestions', i, e.currentTarget.textContent || '')}
+                                                >
+                                                    {q.text}
+                                                </div>
+                                                {q.mediaUrl && (
+                                                    <div style={{ marginTop: '8px', marginBottom: '8px', position: 'relative', width: 'fit-content' }}>
+                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                        <img src={q.mediaUrl} alt="Question Media" style={{ maxWidth: '200px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                                        <button onClick={() => updateQuestionMedia('exitQuestions', i, '')} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                    </div>
+                                                )}
                                             </div>
-                                            <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('exitQuestions', i)} title="Delete Question">
-                                                <Trash2 size={14} strokeWidth={1.5} />
-                                            </button>
+                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                                <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
+                                                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) updateQuestionMedia('exitQuestions', i, URL.createObjectURL(e.target.files[0])); }} />
+                                                    <ImageIcon size={14} strokeWidth={1.5} />
+                                                </label>
+                                                <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('exitQuestions', i)} title="Delete Question">
+                                                    <Trash2 size={14} strokeWidth={1.5} />
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                     <button className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--space-2)' }} onClick={() => addQuestion('exitQuestions')}>

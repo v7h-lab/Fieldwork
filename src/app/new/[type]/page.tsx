@@ -361,6 +361,9 @@ export default function NewStudyPage() {
                                             </div>
                                         </div>
                                     ))}
+                                    <button className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--space-2)' }} onClick={() => addQuestion('preScreen')}>
+                                        <Plus size={14} strokeWidth={1.5} /> Add Pre-screening Question
+                                    </button>
                                 </div>
 
                                 {/* Main Questions */}

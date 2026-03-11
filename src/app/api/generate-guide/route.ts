@@ -34,7 +34,8 @@ Generate a structured JSON response with the following format:
 }
 
 Guidelines:
-- Generate 3-5 pre-screening questions to verify the participant matches the target audience
+- Generate exactly 1 (or at most 2) highly direct, open-ended pre-screening questions to verify the participant matches the target audience
+- For pre-screening, DO NOT use an elaborated multi-question funnel (e.g., asking about hobbies -> board games -> chess). Ask a single, direct question that gets straight to the point (e.g., "Could you describe your recent experiences playing chess?").
 - Generate up to ${maxQuestions} main interview questions that address the research goals
 - For each main question, generate exactly ${maxFollowUps} follow-up questions that probe deeper
 - Generate 2-3 exit questions for final thoughts and anything the participant wants to add

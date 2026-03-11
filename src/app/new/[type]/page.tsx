@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useStudies } from '@/lib/StudyContext';
 import { ResearchType, InputMethod, RESEARCH_TYPES, Study, ResearchGuide } from '@/lib/types';
 import { VoiceInput } from '@/components/VoiceInput';
-import { Check, ArrowRight, ArrowLeft, Loader2, Mic, Video, Monitor, Pencil } from 'lucide-react';
+import { Check, ArrowRight, ArrowLeft, Loader2, Mic, Video, Monitor, Pencil, Trash2, Plus } from 'lucide-react';
 
 const STEPS = ['Goals', 'Audience', 'Method', 'Review'];
 
@@ -26,6 +26,7 @@ export default function NewStudyPage() {
     const [goals, setGoals] = useState('');
     const [audience, setAudience] = useState('');
     const [inputMethod, setInputMethod] = useState<InputMethod>('audio-video');
+    const [maxQuestions, setMaxQuestions] = useState(5);
     const [maxFollowUps, setMaxFollowUps] = useState(2);
     const [studyName, setStudyName] = useState('');
     const [guide, setGuide] = useState<ResearchGuide | null>(null);
@@ -44,6 +45,7 @@ export default function NewStudyPage() {
                     goals,
                     audience,
                     inputMethod,
+                    maxQuestions,
                     maxFollowUps,
                 }),
             });
@@ -76,6 +78,7 @@ export default function NewStudyPage() {
             goals,
             audience,
             inputMethod,
+            maxQuestions,
             maxFollowUps,
             guide,
             responses: [],
@@ -104,6 +107,58 @@ export default function NewStudyPage() {
             arr[idx] = { ...arr[idx], text };
             updated[section] = arr;
         }
+        setGuide(updated);
+    };
+
+    const deleteQuestion = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', idx: number) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        updated[section] = [...updated[section]] as any;
+        updated[section].splice(idx, 1);
+        setGuide(updated);
+    };
+
+    const addQuestion = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions') => {
+        if (!guide) return;
+        const updated = { ...guide };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const newQ: any = { id: crypto.randomUUID(), text: 'New Question' };
+        if (section === 'mainQuestions') newQ.followUps = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        updated[section] = [...updated[section], newQ] as any;
+        setGuide(updated);
+    };
+
+    const deleteFollowUp = (mainIdx: number, fuIdx: number) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        const updatedMain = [...updated.mainQuestions];
+        const updatedFollowUps = [...updatedMain[mainIdx].followUps];
+        updatedFollowUps.splice(fuIdx, 1);
+        updatedMain[mainIdx] = { ...updatedMain[mainIdx], followUps: updatedFollowUps };
+        updated.mainQuestions = updatedMain;
+        setGuide(updated);
+    };
+
+    const addFollowUp = (mainIdx: number) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        const updatedMain = [...updated.mainQuestions];
+        const updatedFollowUps = [...updatedMain[mainIdx].followUps, 'New follow-up'];
+        updatedMain[mainIdx] = { ...updatedMain[mainIdx], followUps: updatedFollowUps };
+        updated.mainQuestions = updatedMain;
+        setGuide(updated);
+    };
+
+    const updateFollowUpText = (mainIdx: number, fuIdx: number, text: string) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        const updatedMain = [...updated.mainQuestions];
+        const updatedFollowUps = [...updatedMain[mainIdx].followUps];
+        updatedFollowUps[fuIdx] = text;
+        updatedMain[mainIdx] = { ...updatedMain[mainIdx], followUps: updatedFollowUps };
+        updated.mainQuestions = updatedMain;
         setGuide(updated);
     };
 
@@ -202,6 +257,24 @@ export default function NewStudyPage() {
                             </div>
                         </div>
                         <div className="form-group">
+                            <label className="form-label">Maximum Main Questions</label>
+                            <div className="form-hint" style={{ marginBottom: 'var(--space-2)', marginTop: 0 }}>
+                                How many core questions should the AI generate?
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    value={maxQuestions}
+                                    onChange={(e) => setMaxQuestions(Math.max(1, Math.min(15, parseInt(e.target.value) || 1)))}
+                                    min={1}
+                                    max={15}
+                                    style={{ width: '80px' }}
+                                />
+                                <span className="caption">1–15 questions</span>
+                            </div>
+                        </div>
+                        <div className="form-group">
                             <label className="form-label">Max Follow-ups per Question</label>
                             <div className="form-hint" style={{ marginBottom: 'var(--space-2)', marginTop: 0 }}>
                                 How many adaptive follow-up questions should the AI ask per main question?
@@ -286,14 +359,36 @@ export default function NewStudyPage() {
                                                 >
                                                     {q.text}
                                                 </div>
+                                                <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('mainQuestions', i)} title="Delete Question">
+                                                    <Trash2 size={14} strokeWidth={1.5} />
+                                                </button>
                                             </div>
                                             {q.followUps.map((fu, fi) => (
-                                                <div key={fi} className="guide-followup">
-                                                    ↳ {fu}
+                                                <div key={fi} className="guide-followup" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                                    ↳ <div
+                                                        className="editable-text"
+                                                        style={{ flex: 1 }}
+                                                        contentEditable
+                                                        suppressContentEditableWarning
+                                                        onBlur={(e) => updateFollowUpText(i, fi, e.currentTarget.textContent || '')}
+                                                    >
+                                                        {fu}
+                                                    </div>
+                                                    <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteFollowUp(i, fi)} title="Delete Follow-up">
+                                                        <Trash2 size={14} strokeWidth={1.5} />
+                                                    </button>
                                                 </div>
                                             ))}
+                                            <div style={{ marginLeft: 'var(--space-8)', marginBottom: 'var(--space-4)' }}>
+                                                <button className="btn btn-ghost btn-sm" onClick={() => addFollowUp(i)} style={{ color: 'var(--neutral-400)' }}>
+                                                    <Plus size={12} strokeWidth={1.5} /> Add Follow-up
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
+                                    <button className="btn btn-ghost btn-sm" onClick={() => addQuestion('mainQuestions')}>
+                                        <Plus size={14} strokeWidth={1.5} /> Add Main Question
+                                    </button>
                                 </div>
 
                                 {/* Exit Questions */}
@@ -313,8 +408,14 @@ export default function NewStudyPage() {
                                             >
                                                 {q.text}
                                             </div>
+                                            <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('exitQuestions', i)} title="Delete Question">
+                                                <Trash2 size={14} strokeWidth={1.5} />
+                                            </button>
                                         </div>
                                     ))}
+                                    <button className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--space-2)' }} onClick={() => addQuestion('exitQuestions')}>
+                                        <Plus size={14} strokeWidth={1.5} /> Add Exit Question
+                                    </button>
                                 </div>
                             </div>
                         )}

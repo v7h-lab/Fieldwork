@@ -5,7 +5,7 @@ import { RESEARCH_TYPES, ResearchType } from '@/lib/types';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { researchType, goals, audience, inputMethod, maxFollowUps } = body;
+    const { researchType, goals, audience, inputMethod, maxQuestions, maxFollowUps } = body;
 
     const typeLabel = RESEARCH_TYPES[researchType as ResearchType]?.label || researchType;
 
@@ -35,7 +35,7 @@ Generate a structured JSON response with the following format:
 
 Guidelines:
 - Generate 3-5 pre-screening questions to verify the participant matches the target audience
-- Generate 5-8 main interview questions that address the research goals
+- Generate up to ${maxQuestions} main interview questions that address the research goals
 - For each main question, generate exactly ${maxFollowUps} follow-up questions that probe deeper
 - Generate 2-3 exit questions for final thoughts and anything the participant wants to add
 - Questions should be open-ended, non-leading, and conversational

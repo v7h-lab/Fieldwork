@@ -45,6 +45,7 @@ export interface Study {
   goals: string;
   audience: string;
   inputMethod: InputMethod;
+  maxQuestions: number;
   maxFollowUps: number;
   guide: ResearchGuide;
   responses: ParticipantResponse[];

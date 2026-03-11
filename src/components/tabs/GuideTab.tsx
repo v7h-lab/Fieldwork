@@ -16,7 +16,17 @@ export function GuideTab({ study }: { study: Study }) {
                 {guide.preScreen.map((q, i) => (
                     <div key={q.id} className="guide-question">
                         <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                        <span className="guide-question-text">{q.text}</span>
+                        <div style={{ flex: 1 }}>
+                            <div className="guide-question-text">{q.text}</div>
+                            {(q.mediaUrls || []).length > 0 && (
+                                <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                    {q.mediaUrls!.map((url, uidx) => (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img key={uidx} src={url} alt="Question Media" style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 ))}
             </div>
@@ -31,7 +41,17 @@ export function GuideTab({ study }: { study: Study }) {
                     <div key={q.id}>
                         <div className="guide-question">
                             <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                            <span className="guide-question-text">{q.text}</span>
+                            <div style={{ flex: 1 }}>
+                                <div className="guide-question-text">{q.text}</div>
+                                {(q.mediaUrls || []).length > 0 && (
+                                    <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        {q.mediaUrls!.map((url, uidx) => (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img key={uidx} src={url} alt="Question Media" style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         {q.followUps.map((fu, fi) => (
                             <div key={fi} className="guide-followup">
@@ -51,7 +71,17 @@ export function GuideTab({ study }: { study: Study }) {
                 {guide.exitQuestions.map((q, i) => (
                     <div key={q.id} className="guide-question">
                         <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                        <span className="guide-question-text">{q.text}</span>
+                        <div style={{ flex: 1 }}>
+                            <div className="guide-question-text">{q.text}</div>
+                            {(q.mediaUrls || []).length > 0 && (
+                                <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                    {q.mediaUrls!.map((url, uidx) => (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img key={uidx} src={url} alt="Question Media" style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 ))}
             </div>

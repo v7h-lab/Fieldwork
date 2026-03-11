@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useStudies } from '@/lib/StudyContext';
 import { ResearchType, InputMethod, RESEARCH_TYPES, Study, ResearchGuide } from '@/lib/types';
 import { VoiceInput } from '@/components/VoiceInput';
-import { Check, ArrowRight, ArrowLeft, Loader2, Mic, Video, Monitor, Pencil, Trash2, Plus } from 'lucide-react';
+import { Check, ArrowRight, ArrowLeft, Loader2, Mic, Video, Monitor, Pencil, Trash2, Plus, Image as ImageIcon, X } from 'lucide-react';
 
 const STEPS = ['Goals', 'Audience', 'Method', 'Review'];
 
@@ -29,6 +29,7 @@ export default function NewStudyPage() {
     const [maxQuestions, setMaxQuestions] = useState(5);
     const [maxFollowUps, setMaxFollowUps] = useState(2);
     const [studyName, setStudyName] = useState('');
+    const [mediaUrls, setMediaUrls] = useState<string[]>([]);
     const [guide, setGuide] = useState<ResearchGuide | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState('');
@@ -45,6 +46,7 @@ export default function NewStudyPage() {
                     goals,
                     audience,
                     inputMethod,
+                    mediaUrls,
                     maxQuestions,
                     maxFollowUps,
                 }),
@@ -78,6 +80,7 @@ export default function NewStudyPage() {
             goals,
             audience,
             inputMethod,
+            mediaUrls,
             maxQuestions,
             maxFollowUps,
             guide,
@@ -210,7 +213,14 @@ export default function NewStudyPage() {
                             <VoiceInput
                                 value={goals}
                                 onChange={setGoals}
-                                placeholder="e.g., We want to understand why users abandon the checkout flow after adding items to cart. Specifically, we're looking at the payment step and any friction points in the address entry..."
+                                placeholder={
+                                    researchType === 'usability' ? "e.g., We want to understand why users abandon the checkout flow after adding items to cart..." :
+                                        researchType === 'discovery' ? "e.g., We want to learn how remote workers manage their daily focus and what tools they currently combine..." :
+                                            researchType === 'concept' ? "e.g., We want to validate if the proposed dashboard layout resolves the navigation confusion reported by users..." :
+                                                researchType === 'jtbd' ? "e.g., We want to uncover the core 'job' users are trying to hire our software for when they export reports..." :
+                                                    researchType === 'longitudinal' ? "e.g., We want to track how users' reliance on the AI assistant changes over their first 30 days..." :
+                                                        "e.g., We want to uncover the main pain points users face when onboarding to the platform..."
+                                }
                                 rows={5}
                             />
                         </div>
@@ -231,6 +241,48 @@ export default function NewStudyPage() {
                                 rows={5}
                             />
                         </div>
+
+                        {researchType === 'concept' && (
+                            <div className="form-group" style={{ marginTop: 'var(--space-6)' }}>
+                                <label className="form-label">Concept Media (Optional)</label>
+                                <div className="form-hint" style={{ marginBottom: 'var(--space-2)', marginTop: 0 }}>
+                                    Add up to 5 images or prototypes to discuss during the session.
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                                        {mediaUrls.map((url, i) => (
+                                            <div key={i} style={{ position: 'relative', width: '80px', height: '80px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--neutral-200)' }}>
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img src={url} alt={`Media ${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                <button
+                                                    onClick={() => setMediaUrls(urls => urls.filter((_, idx) => idx !== i))}
+                                                    className="btn btn-ghost btn-sm"
+                                                    style={{ position: 'absolute', top: 2, right: 2, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%' }}
+                                                >
+                                                    <X size={12} strokeWidth={2} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {mediaUrls.length < 5 && (
+                                            <label style={{ width: '80px', height: '80px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--neutral-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--neutral-400)', background: 'var(--neutral-50)', transition: 'all 0.2s ease' }} className="hover-bg-neutral-100">
+                                                <input
+                                                    type="file"
+                                                    accept="image/*"
+                                                    multiple
+                                                    style={{ display: 'none' }}
+                                                    onChange={(e) => {
+                                                        const files = Array.from(e.target.files || []);
+                                                        const newUrls = files.slice(0, 5 - mediaUrls.length).map(f => URL.createObjectURL(f));
+                                                        setMediaUrls(prev => [...prev, ...newUrls]);
+                                                    }}
+                                                />
+                                                <ImageIcon size={20} strokeWidth={1.5} />
+                                            </label>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 

@@ -38,11 +38,12 @@ Guidelines:
 - Generate up to ${maxQuestions} main interview questions that address the research goals
 - For each main question, generate exactly ${maxFollowUps} follow-up questions that probe deeper
 - Generate 2-3 exit questions for final thoughts and anything the participant wants to add
-- Questions should be open-ended, non-leading, and conversational
-- Tailor questions specifically to the research type and goals
-- Pre-screening questions should be factual/qualifying (yes/no or short answer)
-- Main questions should explore behaviors, experiences, pain points, and needs
-- Follow-ups should dig deeper based on likely responses
+- CRITICAL: STRICTLY adhere to UX research best practices for question framing.
+- CRITICAL: NEVER ask leading, suggesting, or binary (yes/no) questions (e.g., DO NOT ask "Are you between 18 and 35?").
+- CRITICAL: ALWAYS use open-ended, neutral framing (e.g., INSTEAD ask "Could you describe your current age range?").
+- Pre-screening questions MUST be open-ended, allowing the user to self-describe their qualifications without being hinted at the "correct" answer.
+- Main questions should explore behaviors, experiences, pain points, and needs neutrally.
+- Follow-ups should dig deeper based on likely responses without feeding words into the participant's mouth.
 
 Return ONLY valid JSON, no markdown, no explanation.`;
 

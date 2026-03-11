@@ -45,6 +45,7 @@ export interface Study {
   goals: string;
   audience: string;
   inputMethod: InputMethod;
+  mediaUrls?: string[];
   maxQuestions: number;
   maxFollowUps: number;
   guide: ResearchGuide;

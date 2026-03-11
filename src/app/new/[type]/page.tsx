@@ -110,15 +110,26 @@ export default function NewStudyPage() {
         setGuide(updated);
     };
 
-    const updateQuestionMedia = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', idx: number, mediaUrl: string) => {
+    const updateQuestionMediaUrls = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', idx: number, action: 'add' | 'remove', mediaUrl: string) => {
         if (!guide) return;
         const updated = { ...guide };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const applyToQuestion = (q: any) => {
+            const currentUrls = q.mediaUrls || [];
+            if (action === 'add' && currentUrls.length < 5) {
+                return { ...q, mediaUrls: [...currentUrls, mediaUrl] };
+            } else if (action === 'remove') {
+                return { ...q, mediaUrls: currentUrls.filter((url: string) => url !== mediaUrl) };
+            }
+            return q;
+        };
+
         if (section === 'mainQuestions') {
             updated.mainQuestions = [...updated.mainQuestions];
-            updated.mainQuestions[idx] = { ...updated.mainQuestions[idx], mediaUrl };
+            updated.mainQuestions[idx] = applyToQuestion(updated.mainQuestions[idx]);
         } else {
             const arr = [...updated[section]];
-            arr[idx] = { ...arr[idx], mediaUrl };
+            arr[idx] = applyToQuestion(arr[idx]);
             updated[section] = arr;
         }
         setGuide(updated);
@@ -351,13 +362,42 @@ export default function NewStudyPage() {
                                     {guide.preScreen.map((q, i) => (
                                         <div key={q.id} className="guide-question">
                                             <span className="guide-question-index">{String(i + 1).padStart(2, '0')}</span>
-                                            <div
-                                                className="guide-question-text editable-text"
-                                                contentEditable
-                                                suppressContentEditableWarning
-                                                onBlur={(e) => updateQuestionText('preScreen', i, e.currentTarget.textContent || '')}
-                                            >
-                                                {q.text}
+                                            <div style={{ flex: 1 }}>
+                                                <div
+                                                    className="guide-question-text editable-text"
+                                                    contentEditable
+                                                    suppressContentEditableWarning
+                                                    onBlur={(e) => updateQuestionText('preScreen', i, e.currentTarget.textContent || '')}
+                                                >
+                                                    {q.text}
+                                                </div>
+                                                {(q.mediaUrls || []).length > 0 && (
+                                                    <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                        {q.mediaUrls!.map((url, uidx) => (
+                                                            <div key={uidx} style={{ position: 'relative', width: 'fit-content' }}>
+                                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                <img src={url} alt={`Question Media ${uidx + 1}`} style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                                                <button onClick={() => updateQuestionMediaUrls('preScreen', i, 'remove', url)} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                                {(q.mediaUrls || []).length < 5 && (
+                                                    <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
+                                                        <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
+                                                            const files = Array.from(e.target.files || []);
+                                                            files.slice(0, 5 - (q.mediaUrls?.length || 0)).forEach(file => {
+                                                                updateQuestionMediaUrls('preScreen', i, 'add', URL.createObjectURL(file));
+                                                            });
+                                                        }} />
+                                                        <ImageIcon size={14} strokeWidth={1.5} />
+                                                    </label>
+                                                )}
+                                                <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('preScreen', i)} title="Delete Question">
+                                                    <Trash2 size={14} strokeWidth={1.5} />
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -385,19 +425,30 @@ export default function NewStudyPage() {
                                                     >
                                                         {q.text}
                                                     </div>
-                                                    {q.mediaUrl && (
-                                                        <div style={{ marginTop: '8px', marginBottom: '8px', position: 'relative', width: 'fit-content' }}>
-                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                            <img src={q.mediaUrl} alt="Question Media" style={{ maxWidth: '200px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
-                                                            <button onClick={() => updateQuestionMedia('mainQuestions', i, '')} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                    {(q.mediaUrls || []).length > 0 && (
+                                                        <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                            {q.mediaUrls!.map((url, uidx) => (
+                                                                <div key={uidx} style={{ position: 'relative', width: 'fit-content' }}>
+                                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                    <img src={url} alt={`Question Media ${uidx + 1}`} style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                                                    <button onClick={() => updateQuestionMediaUrls('mainQuestions', i, 'remove', url)} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>
                                                 <div style={{ display: 'flex', gap: '4px' }}>
-                                                    <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
-                                                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) updateQuestionMedia('mainQuestions', i, URL.createObjectURL(e.target.files[0])); }} />
-                                                        <ImageIcon size={14} strokeWidth={1.5} />
-                                                    </label>
+                                                    {(q.mediaUrls || []).length < 5 && (
+                                                        <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
+                                                            <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
+                                                                const files = Array.from(e.target.files || []);
+                                                                files.slice(0, 5 - (q.mediaUrls?.length || 0)).forEach(file => {
+                                                                    updateQuestionMediaUrls('mainQuestions', i, 'add', URL.createObjectURL(file));
+                                                                });
+                                                            }} />
+                                                            <ImageIcon size={14} strokeWidth={1.5} />
+                                                        </label>
+                                                    )}
                                                     <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('mainQuestions', i)} title="Delete Question">
                                                         <Trash2 size={14} strokeWidth={1.5} />
                                                     </button>
@@ -449,19 +500,30 @@ export default function NewStudyPage() {
                                                 >
                                                     {q.text}
                                                 </div>
-                                                {q.mediaUrl && (
-                                                    <div style={{ marginTop: '8px', marginBottom: '8px', position: 'relative', width: 'fit-content' }}>
-                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                        <img src={q.mediaUrl} alt="Question Media" style={{ maxWidth: '200px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
-                                                        <button onClick={() => updateQuestionMedia('exitQuestions', i, '')} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                {(q.mediaUrls || []).length > 0 && (
+                                                    <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                        {q.mediaUrls!.map((url, uidx) => (
+                                                            <div key={uidx} style={{ position: 'relative', width: 'fit-content' }}>
+                                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                <img src={url} alt={`Question Media ${uidx + 1}`} style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                                                <button onClick={() => updateQuestionMediaUrls('exitQuestions', i, 'remove', url)} className="btn btn-ghost btn-sm" style={{ position: 'absolute', top: 4, right: 4, padding: 2, background: 'rgba(0,0,0,0.5)', color: 'white' }}><X size={12} strokeWidth={2} /></button>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 )}
                                             </div>
                                             <div style={{ display: 'flex', gap: '4px' }}>
-                                                <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
-                                                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) updateQuestionMedia('exitQuestions', i, URL.createObjectURL(e.target.files[0])); }} />
-                                                    <ImageIcon size={14} strokeWidth={1.5} />
-                                                </label>
+                                                {(q.mediaUrls || []).length < 5 && (
+                                                    <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
+                                                        <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
+                                                            const files = Array.from(e.target.files || []);
+                                                            files.slice(0, 5 - (q.mediaUrls?.length || 0)).forEach(file => {
+                                                                updateQuestionMediaUrls('exitQuestions', i, 'add', URL.createObjectURL(file));
+                                                            });
+                                                        }} />
+                                                        <ImageIcon size={14} strokeWidth={1.5} />
+                                                    </label>
+                                                )}
                                                 <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }} onClick={() => deleteQuestion('exitQuestions', i)} title="Delete Question">
                                                     <Trash2 size={14} strokeWidth={1.5} />
                                                 </button>

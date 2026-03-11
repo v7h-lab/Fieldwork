@@ -5,14 +5,14 @@ export type StudyStatus = 'draft' | 'active' | 'completed';
 export interface Question {
   id: string;
   text: string;
-  mediaUrl?: string;
+  mediaUrls?: string[];
 }
 
 export interface MainQuestion {
   id: string;
   text: string;
   followUps: string[];
-  mediaUrl?: string;
+  mediaUrls?: string[];
 }
 
 export interface ResearchGuide {

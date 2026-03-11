@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { Study, TranscriptEntry, ParticipantResponse } from '@/lib/types';
-import { Mic, MicOff, Compass, CheckCircle, Volume2, VolumeX } from 'lucide-react';
+import { Mic, MicOff, Compass, CheckCircle, Volume2, VolumeX, ChevronLeft, ChevronRight } from 'lucide-react';
 
 type InterviewState = 'loading' | 'name' | 'active' | 'completed' | 'error';
 
@@ -17,7 +17,8 @@ export default function InterviewPage() {
     const [messages, setMessages] = useState<TranscriptEntry[]>([]);
     const [currentQuestion, setCurrentQuestion] = useState('');
     const [liveTranscript, setLiveTranscript] = useState('');
-    const [activeMediaUrl, setActiveMediaUrl] = useState<string | null>(null);
+    const [activeMediaUrls, setActiveMediaUrls] = useState<string[]>([]);
+    const [activeMediaIndex, setActiveMediaIndex] = useState(0);
     const [isListening, setIsListening] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isSending, setIsSending] = useState(false);
@@ -232,21 +233,22 @@ export default function InterviewPage() {
                 setQuestionCount(prev => prev + 1);
 
                 // Find if the current question corresponds to a mediaUrl in the guide
-                let foundMedia = null;
+                let foundMedia: string[] = [];
                 if (study?.guide) {
                     const agentWords = new Set(data.message.toLowerCase().match(/\w+/g) || []);
                     const allQuestions = [...study.guide.preScreen, ...study.guide.mainQuestions, ...study.guide.exitQuestions];
                     for (const q of allQuestions) {
-                        if (!q.mediaUrl) continue;
+                        if (!q.mediaUrls || q.mediaUrls.length === 0) continue;
                         const qWords = new Set(q.text.toLowerCase().match(/\w+/g) || []);
                         const intersection = new Set(Array.from(agentWords).filter(x => qWords.has(x as string)));
                         if (intersection.size / qWords.size > 0.5) {
-                            foundMedia = q.mediaUrl;
+                            foundMedia = q.mediaUrls;
                             break;
                         }
                     }
                 }
-                setActiveMediaUrl(foundMedia);
+                setActiveMediaUrls(foundMedia);
+                setActiveMediaIndex(0);
 
                 // Read the question aloud
                 speak(data.message);
@@ -485,10 +487,48 @@ export default function InterviewPage() {
                     )}
 
                     {/* Active Media Overlay */}
-                    {activeMediaUrl && (
+                    {activeMediaUrls.length > 0 && (
                         <div style={{ position: 'absolute', inset: 0, zIndex: 5, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={activeMediaUrl} alt="Concept Media" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                            <img src={activeMediaUrls[activeMediaIndex]} alt={`Concept Media ${activeMediaIndex + 1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+
+                            {activeMediaUrls.length > 1 && (
+                                <>
+                                    <div style={{ position: 'absolute', bottom: '24px', display: 'flex', gap: '8px', zIndex: 10 }}>
+                                        {activeMediaUrls.map((_, idx) => (
+                                            <button
+                                                key={idx}
+                                                onClick={() => setActiveMediaIndex(idx)}
+                                                style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    padding: 0,
+                                                    border: 'none',
+                                                    background: idx === activeMediaIndex ? 'var(--primary)' : 'rgba(255,255,255,0.3)',
+                                                    cursor: 'pointer',
+                                                    transition: 'background 0.2s ease'
+                                                }}
+                                                aria-label={`Show image ${idx + 1}`}
+                                            />
+                                        ))}
+                                    </div>
+                                    <button
+                                        onClick={() => setActiveMediaIndex(prev => prev > 0 ? prev - 1 : activeMediaUrls.length - 1)}
+                                        style={{ position: 'absolute', left: '24px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 10, transition: 'background 0.2s ease' }}
+                                        className="hover-bg-black"
+                                    >
+                                        <ChevronLeft size={24} strokeWidth={2} />
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveMediaIndex(prev => prev < activeMediaUrls.length - 1 ? prev + 1 : 0)}
+                                        style={{ position: 'absolute', right: '24px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 10, transition: 'background 0.2s ease' }}
+                                        className="hover-bg-black"
+                                    >
+                                        <ChevronRight size={24} strokeWidth={2} />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     )}
 

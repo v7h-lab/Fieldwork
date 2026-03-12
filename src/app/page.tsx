@@ -78,7 +78,7 @@ export default function HomePage() {
       </div>
 
       {studies.length > 0 && (
-        <div style={{ marginTop: 'var(--space-12)', borderTop: '1px solid var(--neutral-200)', paddingTop: 'var(--space-8)' }}>
+        <div style={{ marginTop: '80px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-6)' }}>
             <div>
               <h3 style={{ fontSize: '20px', fontWeight: 500, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>Studies</h3>
@@ -117,7 +117,7 @@ export default function HomePage() {
                     padding: 'var(--space-4)',
                     background: 'white',
                     border: '1px solid var(--neutral-200)',
-                    borderRadius: 'var(--radius-md)',
+                    borderRadius: 'var(--radius)',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                   }}

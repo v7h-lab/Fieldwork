@@ -112,7 +112,7 @@ export function ResponsesTab({ study }: { study: Study }) {
                                                     <h3 style={{ fontSize: '15px', fontWeight: 500, marginBottom: 'var(--space-4)', color: 'var(--text-primary)' }}>Transcript</h3>
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
                                                         {pairs.map((pair, idx) => (
-                                                            <div key={idx} style={{ padding: 'var(--space-4)', background: 'white', borderRadius: 'var(--radius-md)', border: '1px solid var(--neutral-200)' }}>
+                                                            <div key={idx} style={{ padding: 'var(--space-4)', background: 'white', borderRadius: 'var(--radius)', border: '1px solid var(--neutral-200)' }}>
                                                                 <div style={{ color: 'var(--neutral-500)', marginBottom: '12px', fontSize: '13px', fontWeight: 500, lineHeight: 1.5 }}>
                                                                     <span style={{ marginRight: '6px', fontWeight: 600 }}>Q:</span>
                                                                     {pair.q.text}

@@ -140,7 +140,9 @@ export default function HomePage() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    {study.responses.length > 0 ? (
+                    {study.status === 'paused' ? (
+                      <span className="badge" style={{ backgroundColor: 'var(--neutral-200)', color: 'var(--neutral-600)', border: 'none' }}>Paused</span>
+                    ) : study.responses.length > 0 ? (
                       <span className="badge" style={{ backgroundColor: 'var(--primary)', color: 'white', border: 'none' }}>In Progress</span>
                     ) : (
                       <span className="badge">Draft</span>

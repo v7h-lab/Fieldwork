@@ -1,15 +1,20 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import { Study, TranscriptEntry, ParticipantResponse } from '@/lib/types';
-import { Mic, MicOff, Compass, CheckCircle, Volume2, VolumeX, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getTranslation } from '@/lib/translations';
+import { Mic, MicOff, Compass, CheckCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, Pause } from 'lucide-react';
 
 type InterviewState = 'loading' | 'name' | 'active' | 'completed' | 'error';
 
-export default function InterviewPage() {
+function InterviewPageContent() {
     const params = useParams();
+    const searchParams = useSearchParams();
     const studyId = params.id as string;
+    const lang = searchParams.get('lang') || 'en-US';
+
+    const t = (key: Parameters<typeof getTranslation>[1]) => getTranslation(lang, key);
 
     const [study, setStudy] = useState<Study | null>(null);
     const [state, setState] = useState<InterviewState>('loading');
@@ -19,10 +24,14 @@ export default function InterviewPage() {
     const [liveTranscript, setLiveTranscript] = useState('');
     const [activeMediaUrls, setActiveMediaUrls] = useState<string[]>([]);
     const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+    const [activeOptions, setActiveOptions] = useState<string[]>([]);
+    const [activeQuestionType, setActiveQuestionType] = useState<string>('open');
+    const [selectedOption, setSelectedOption] = useState<string | null>(null);
     const [isListening, setIsListening] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const [ttsEnabled, setTtsEnabled] = useState(true);
+    const [uploadingVideo, setUploadingVideo] = useState(false);
     const [interviewStartTime] = useState<number>(Date.now());
     const [questionCount, setQuestionCount] = useState(0);
     const [sessionId] = useState(() => `interview_${studyId}_${Date.now()}`);
@@ -44,6 +53,10 @@ export default function InterviewPage() {
                 const studies: Study[] = JSON.parse(stored);
                 const found = studies.find(s => s.id === studyId);
                 if (found) {
+                    if (found.status === 'paused') {
+                        setState('error');
+                        return;
+                    }
                     setStudy(found);
                     setState('name');
                 } else {
@@ -85,7 +98,9 @@ export default function InterviewPage() {
 
     const stopCamera = useCallback(() => {
         streamRef.current?.getTracks().forEach(t => t.stop());
-        mediaRecorderRef.current?.stop();
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
     }, []);
 
     const stopListening = useCallback(() => {
@@ -113,7 +128,7 @@ export default function InterviewPage() {
         const recognition = new Ctor();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = 'en-US';
+        recognition.lang = lang;
 
         finalTranscriptRef.current = '';
 
@@ -214,6 +229,8 @@ export default function InterviewPage() {
                     maxFollowUps: study.maxFollowUps,
                     messages: currentMessages.map(m => ({ role: m.role, text: m.text })),
                     sessionId,
+                    lang,
+                    smartSkipping: study.smartSkipping,
                 }),
             });
             const data = await res.json();
@@ -232,29 +249,39 @@ export default function InterviewPage() {
                 setCurrentQuestion(data.message);
                 setQuestionCount(prev => prev + 1);
 
-                // Find if the current question corresponds to a mediaUrl in the guide
+                // Find if the current question corresponds to a mediaUrl or interactive options in the guide
                 let foundMedia: string[] = [];
+                let foundOptions: string[] = [];
+                let foundType: string = 'open';
+
                 if (study?.guide) {
                     const agentWords = new Set(data.message.toLowerCase().match(/\w+/g) || []);
                     const allQuestions = [...study.guide.preScreen, ...study.guide.mainQuestions, ...study.guide.exitQuestions];
                     for (const q of allQuestions) {
-                        if (!q.mediaUrls || q.mediaUrls.length === 0) continue;
                         const qWords = new Set(q.text.toLowerCase().match(/\w+/g) || []);
                         const intersection = new Set(Array.from(agentWords).filter(x => qWords.has(x as string)));
                         if (intersection.size / qWords.size > 0.5) {
-                            foundMedia = q.mediaUrls;
+                            if (q.mediaUrls && q.mediaUrls.length > 0) foundMedia = q.mediaUrls;
+                            if (q.type && q.type !== 'open' && q.options && q.options.length > 0) {
+                                foundOptions = q.options;
+                                foundType = q.type;
+                            }
                             break;
                         }
                     }
                 }
                 setActiveMediaUrls(foundMedia);
                 setActiveMediaIndex(0);
+                setActiveOptions(foundOptions);
+                setActiveQuestionType(foundType);
+                setSelectedOption(null);
 
                 // Read the question aloud
                 speak(data.message);
 
                 if (data.action === 'end') {
-                    completeInterview(updated);
+                    // Slight delay to allow final TTS to queue
+                    setTimeout(() => completeInterview(updated), 500);
                 }
             }
         } catch {
@@ -282,6 +309,11 @@ export default function InterviewPage() {
             text = `[Participant interrupted the AI to say]: ${text || '(interrupted but said nothing yet)'}`;
         }
 
+        // Clear interactive state
+        setActiveOptions([]);
+        setActiveQuestionType('open');
+        setSelectedOption(null);
+
         const entry: TranscriptEntry = {
             role: 'participant',
             text,
@@ -297,6 +329,33 @@ export default function InterviewPage() {
         await getAgentResponse(updated);
     }, [liveTranscript, isSending, messages, interviewStartTime, getAgentResponse, stopListening]);
 
+    // Manual Submit for multiple-choice / binary
+    const submitOptionResponse = useCallback(async (optionText: string) => {
+        if (isSending) return;
+
+        stopListening();
+        if (audioRef.current) audioRef.current.pause();
+        window.speechSynthesis?.cancel();
+
+        const entry: TranscriptEntry = {
+            role: 'participant',
+            text: `[Selected Option]: ${optionText}`,
+            timestamp: new Date().toISOString(),
+            videoTimestamp: (Date.now() - interviewStartTime) / 1000,
+        };
+
+        const updated = [...messages, entry];
+        setMessages(updated);
+        setLiveTranscript('');
+        finalTranscriptRef.current = '';
+
+        setActiveOptions([]);
+        setActiveQuestionType('open');
+        setSelectedOption(null);
+
+        await getAgentResponse(updated);
+    }, [isSending, messages, interviewStartTime, getAgentResponse, stopListening]);
+
     // Interrupt AI speaking
     const interruptAgent = useCallback(() => {
         if (audioRef.current) {
@@ -309,24 +368,104 @@ export default function InterviewPage() {
         // The user can now speak their interruption, and submit it normally.
     }, [startListening]);
 
-    const completeInterview = (transcript: TranscriptEntry[]) => {
-        setState('completed');
+    const completeInterview = async (transcript: TranscriptEntry[]) => {
         stopListening();
-        stopCamera();
+        window.speechSynthesis?.cancel();
 
         // Cancel audio
         if (audioRef.current) {
             audioRef.current.pause();
         }
-        window.speechSynthesis?.cancel();
 
+        const responseId = crypto.randomUUID();
         const response: ParticipantResponse = {
-            id: crypto.randomUUID(),
+            id: responseId,
             participantName: participantName.trim(),
             completedAt: new Date().toISOString(),
             transcript,
             screenedOut: false,
         };
+
+        // Stop recording and handle video upload
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            setState('loading'); // Show loading spinner while uploading
+            setUploadingVideo(true);
+
+            // Create a promise to wait for the final data chunks
+            const getBlob = new Promise<Blob>((resolve) => {
+                mediaRecorderRef.current!.onstop = () => {
+                    const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+                    resolve(blob);
+                };
+                mediaRecorderRef.current!.stop();
+            });
+
+            try {
+                const blob = await getBlob;
+
+                // Only upload if it's a substantive video (e.g. > 10KB)
+                if (blob.size > 10000) {
+                    const filename = `interviews/${studyId}/${responseId}.webm`;
+
+                    // 1. Get signed URL
+                    const urlRes = await fetch('/api/upload-url', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filename, contentType: 'video/webm' }),
+                    });
+
+                    if (urlRes.ok) {
+                        const { uploadUrl, publicUrl } = await urlRes.json();
+
+                        // 2. Upload to GCS
+                        const uploadRes = await fetch(uploadUrl, {
+                            method: 'PUT',
+                            body: blob,
+                            headers: { 'Content-Type': 'video/webm' },
+                        });
+
+                        if (uploadRes.ok) {
+                            response.videoPath = filename;
+                            response.videoDuration = Math.round((Date.now() - interviewStartTime) / 1000);
+                        } else {
+                            console.error('Failed to upload video chunk to GCS', uploadRes.statusText);
+                        }
+                    } else {
+                        console.error('Failed to get signed upload URL');
+                    }
+                }
+            } catch (err) {
+                console.error('Error uploading video:', err);
+            } finally {
+                setUploadingVideo(false);
+            }
+        } else {
+            // Audio only or no camera — just stop tracks
+            streamRef.current?.getTracks().forEach(t => t.stop());
+        }
+
+        // Translate transcript if necessary
+        if (lang !== 'en-US') {
+            setState('loading'); // Ensure spinner is up
+            try {
+                const transRes = await fetch('/api/translate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ texts: transcript.map(t => t.text), sourceLang: lang }),
+                });
+                if (transRes.ok) {
+                    const data = await transRes.json();
+                    if (data.translations && data.translations.length === transcript.length) {
+                        response.transcript = transcript.map((entry, i) => ({
+                            ...entry,
+                            translatedText: data.translations[i],
+                        }));
+                    }
+                }
+            } catch (err) {
+                console.error('Translation failed', err);
+            }
+        }
 
         try {
             const stored = localStorage.getItem('fieldwork_studies');
@@ -341,6 +480,8 @@ export default function InterviewPage() {
         } catch {
             // ignore
         }
+
+        setState('completed');
     };
 
     const startInterview = () => {
@@ -375,17 +516,35 @@ export default function InterviewPage() {
     if (state === 'loading') {
         return (
             <div style={styles.centerScreen}>
-                <div className="spinner" />
+                <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+                    <div className="spinner" />
+                    {uploadingVideo && (
+                        <p style={{ color: 'var(--text-secondary)' }}>{t('saving')}</p>
+                    )}
+                </div>
             </div>
         );
     }
 
     if (state === 'error') {
+        const isPaused = study?.status === 'paused';
         return (
             <div style={styles.centerScreen}>
-                <div style={{ textAlign: 'center' }}>
-                    <h3 style={{ marginBottom: '8px' }}>Interview not found</h3>
-                    <p className="caption">This interview link may be invalid or expired.</p>
+                <div style={{ textAlign: 'center', maxWidth: '400px', padding: '0 var(--space-6)' }}>
+                    {isPaused ? (
+                        <>
+                            <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'var(--neutral-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                                <Pause size={32} strokeWidth={1.5} style={{ color: 'var(--neutral-400)' }} />
+                            </div>
+                            <h3 style={{ marginBottom: '8px', fontSize: '20px', fontWeight: 500 }}>Study is Paused</h3>
+                            <p className="body-text" style={{ color: 'var(--neutral-500)' }}>This interview session is currently inactive. Please contact the researcher for more information.</p>
+                        </>
+                    ) : (
+                        <>
+                            <h3 style={{ marginBottom: '8px' }}>Interview not found</h3>
+                            <p className="caption">This interview link may be invalid or expired.</p>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -396,9 +555,9 @@ export default function InterviewPage() {
             <div style={styles.centerScreen}>
                 <div style={{ textAlign: 'center', maxWidth: '400px' }}>
                     <CheckCircle size={48} strokeWidth={1.5} style={{ color: 'var(--text-primary)', marginBottom: '16px' }} />
-                    <h2 style={{ marginBottom: '8px' }}>Thank you, {participantName}!</h2>
+                    <h2 style={{ marginBottom: '8px' }}>{t('thankYou')}</h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.7 }}>
-                        Your interview has been recorded. Your responses will help inform the research.
+                        {t('complete')}
                     </p>
                     <div style={{ marginTop: '24px' }}>
                         <span className="caption">{questionCount} questions · {Math.round((Date.now() - interviewStartTime) / 60000)} min</span>
@@ -416,12 +575,12 @@ export default function InterviewPage() {
                         <Compass size={22} strokeWidth={1.5} />
                         <span style={{ fontSize: '17px', fontWeight: 600, letterSpacing: '-0.02em' }}>Fieldwork</span>
                     </div>
-                    <h2 style={{ marginBottom: '8px', fontSize: '26px', fontWeight: 400 }}>Welcome</h2>
+                    <h2 style={{ marginBottom: '8px', fontSize: '26px', fontWeight: 400 }}>{t('welcome')}</h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '8px', lineHeight: 1.7 }}>
-                        You&apos;ve been invited to a research interview. An AI moderator will guide the conversation.
+                        {t('recordingNotice')}
                     </p>
                     <p style={{ color: 'var(--neutral-400)', fontSize: '13px', marginBottom: '32px' }}>
-                        📹 Camera &amp; microphone access will be requested when you begin.
+                        📹 {t('reqAccess')}
                     </p>
                     <div className="form-group">
                         <label className="form-label">Your Name</label>
@@ -429,13 +588,13 @@ export default function InterviewPage() {
                             className="input"
                             value={participantName}
                             onChange={(e) => setParticipantName(e.target.value)}
-                            placeholder="Enter your name"
+                            placeholder="Type your name..."
                             onKeyDown={(e) => e.key === 'Enter' && startInterview()}
                             style={{ fontSize: '15px', padding: '10px 14px' }}
                         />
                     </div>
                     <button className="btn btn-primary btn-lg" style={{ width: '100%', padding: '12px', fontSize: '15px' }} onClick={startInterview} disabled={!participantName.trim()}>
-                        Start Interview
+                        {t('startBtn')}
                     </button>
                 </div>
             </div>
@@ -495,22 +654,28 @@ export default function InterviewPage() {
                             {activeMediaUrls.length > 1 && (
                                 <>
                                     <div style={{ position: 'absolute', bottom: '24px', display: 'flex', gap: '8px', zIndex: 10 }}>
-                                        {activeMediaUrls.map((_, idx) => (
+                                        {activeMediaUrls.map((url, idx) => (
                                             <button
                                                 key={idx}
                                                 onClick={() => setActiveMediaIndex(idx)}
                                                 style={{
-                                                    width: '12px',
-                                                    height: '12px',
-                                                    borderRadius: '50%',
-                                                    padding: 0,
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    background: 'transparent',
                                                     border: 'none',
-                                                    background: idx === activeMediaIndex ? 'var(--primary)' : 'rgba(255,255,255,0.3)',
                                                     cursor: 'pointer',
-                                                    transition: 'background 0.2s ease'
+                                                    opacity: idx === activeMediaIndex ? 1 : 0.5,
+                                                    transition: 'opacity 0.2s ease',
                                                 }}
-                                                aria-label={`Show image ${idx + 1}`}
-                                            />
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img src={url} alt={`Option ${idx + 1}`} style={{ width: '60px', height: '40px', objectFit: 'cover', borderRadius: '4px', border: `2px solid ${idx === activeMediaIndex ? 'var(--primary)' : 'transparent'}` }} />
+                                                <span style={{ color: 'white', fontSize: '11px', fontWeight: 500, background: 'rgba(0,0,0,0.6)', padding: '2px 6px', borderRadius: '4px' }}>
+                                                    Option {String.fromCharCode(65 + idx)}
+                                                </span>
+                                            </button>
                                         ))}
                                     </div>
                                     <button
@@ -543,7 +708,7 @@ export default function InterviewPage() {
                     {isListening && (
                         <div style={styles.listeningIndicator}>
                             <div style={styles.listeningDot} />
-                            <span>Listening</span>
+                            <span>{t('listening')}</span>
                         </div>
                     )}
                 </div>
@@ -553,12 +718,12 @@ export default function InterviewPage() {
                     {/* Current question */}
                     <div style={styles.questionDisplay}>
                         <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '12px' }}>
-                            {isSending ? 'Thinking…' : `Question ${questionCount}`}
+                            {isSending ? t('thinking') : `Question ${questionCount}`}
                         </div>
                         {isSending ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <div className="spinner" />
-                                <span style={{ fontSize: '14px', color: 'var(--neutral-400)' }}>Preparing next question…</span>
+                                <span style={{ fontSize: '14px', color: 'var(--neutral-400)' }}>{t('thinking')}</span>
                             </div>
                         ) : (
                             <p style={{ fontSize: '18px', fontWeight: 400, lineHeight: 1.6, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
@@ -567,18 +732,56 @@ export default function InterviewPage() {
                         )}
                     </div>
 
-                    {/* Live transcription */}
+                    {/* Live transcription / Interactive Options */}
                     <div style={styles.transcriptArea}>
-                        <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '8px' }}>
-                            Your Response
-                        </div>
-                        <div style={styles.transcriptText}>
-                            {liveTranscript || (
-                                <span style={{ color: 'var(--neutral-300)', fontStyle: 'italic' }}>
-                                    {isListening ? 'Speak your response…' : 'Press the microphone to respond'}
-                                </span>
-                            )}
-                        </div>
+                        {activeOptions.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)', marginBottom: '4px' }}>
+                                    {activeQuestionType === 'binary-choice' ? 'Select one option:' : 'Select many options (experimental):'}
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {activeOptions.map((opt, idx) => (
+                                        <label key={idx} style={{
+                                            display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 18px',
+                                            background: selectedOption === opt ? 'rgba(0,0,0,0.03)' : 'var(--bg-page)',
+                                            border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-200)'}`,
+                                            borderRadius: 'var(--radius-sm)', cursor: 'pointer', transition: 'all 0.2s',
+                                        }}>
+                                            <div style={{
+                                                width: '18px', height: '18px',
+                                                border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-400)'}`,
+                                                borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '4px',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                            }}>
+                                                {selectedOption === opt && <div style={{ width: '10px', height: '10px', background: 'var(--black)', borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '2px' }} />}
+                                            </div>
+                                            <span style={{ fontSize: '15px', fontWeight: 400, flex: 1, color: 'var(--text-primary)' }}>{opt}</span>
+                                            <input
+                                                type="radio"
+                                                name="interactive-option"
+                                                value={opt}
+                                                checked={selectedOption === opt}
+                                                onChange={() => setSelectedOption(opt)}
+                                                style={{ display: 'none' }}
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '8px' }}>
+                                    Your Response
+                                </div>
+                                <div style={styles.transcriptText}>
+                                    {liveTranscript || (
+                                        <span style={{ color: 'var(--neutral-300)', fontStyle: 'italic' }}>
+                                            {isListening ? 'Speak your response…' : 'Press the microphone to respond'}
+                                        </span>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
 
                     {/* Controls */}
@@ -616,11 +819,21 @@ export default function InterviewPage() {
 
                         <button
                             className="btn btn-primary btn-lg"
-                            onClick={() => submitResponse(false)}
-                            disabled={(!liveTranscript.trim() && !isListening) || isSending}
-                            style={{ flex: 1, padding: '12px', fontSize: '14px' }}
+                            onClick={() => {
+                                if (activeOptions.length > 0) {
+                                    if (selectedOption) submitOptionResponse(selectedOption);
+                                } else {
+                                    submitResponse(false);
+                                }
+                            }}
+                            disabled={
+                                (activeOptions.length > 0 && !selectedOption) ||
+                                (activeOptions.length === 0 && !liveTranscript.trim() && !isListening) ||
+                                isSending
+                            }
+                            style={{ flex: 1, padding: '12px', fontSize: '15px', fontWeight: 500 }}
                         >
-                            {isSending ? 'Sending…' : 'Submit Response'}
+                            {isSending ? t('saving') : t('submit')}
                         </button>
                     </div>
                 </div>
@@ -728,11 +941,11 @@ const styles: Record<string, React.CSSProperties> = {
         overflow: 'auto',
     },
     transcriptArea: {
-        padding: '20px 28px',
+        padding: '24px 28px',
         borderBottom: '1px solid var(--neutral-100)',
-        minHeight: '140px',
-        maxHeight: '200px',
+        flex: 1, // Allow it to take more space
         overflow: 'auto',
+        maxHeight: '400px', // Set a larger maxHeight
     },
     transcriptText: {
         fontSize: '14px',
@@ -758,3 +971,11 @@ const styles: Record<string, React.CSSProperties> = {
         flexShrink: 0,
     },
 };
+
+export default function InterviewPage() {
+    return (
+        <Suspense fallback={<div style={styles.centerScreen}><div className="spinner" /></div>}>
+            <InterviewPageContent />
+        </Suspense>
+    );
+}

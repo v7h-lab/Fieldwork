@@ -8,10 +8,10 @@ const agentCache = new Map<string, any>();
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { studyType, goals, audience, guide, maxFollowUps, messages, sessionId } = body;
+        const { studyType, goals, audience, guide, maxFollowUps, messages, sessionId, lang, smartSkipping } = body;
 
         // Create or get cached agent for this study config
-        const cacheKey = `${studyType}_${(goals || '').substring(0, 50)}`;
+        const cacheKey = `${studyType}_${(goals || '').substring(0, 50)}_${lang || 'en-US'}_${smartSkipping ? 'skip' : 'noskip'}`;
         let agent = agentCache.get(cacheKey);
         if (!agent) {
             agent = createInterviewAgent({
@@ -20,6 +20,8 @@ export async function POST(request: NextRequest) {
                 audience,
                 guide,
                 maxFollowUps: maxFollowUps || 2,
+                lang: lang || 'en-US',
+                smartSkipping,
             });
             agentCache.set(cacheKey, agent);
         }

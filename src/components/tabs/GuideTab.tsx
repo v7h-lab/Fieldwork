@@ -26,6 +26,22 @@ export function GuideTab({ study }: { study: Study }) {
                                     ))}
                                 </div>
                             )}
+                            {q.type && q.type !== 'open' && (q.options || []).length > 0 && (
+                                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    {q.options!.map((opt, oidx) => (
+                                        <div key={oidx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--neutral-600)' }}>
+                                            <div style={{
+                                                width: '12px', height: '12px', border: '1px solid var(--neutral-400)',
+                                                borderRadius: q.type === 'binary-choice' ? '50%' : '2px'
+                                            }} />
+                                            <span style={{ fontSize: '11px', color: 'var(--neutral-400)', marginRight: '4px' }}>
+                                                {q.type === 'binary-choice' ? '(one)' : '(many)'}
+                                            </span>
+                                            {opt}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -48,6 +64,19 @@ export function GuideTab({ study }: { study: Study }) {
                                         {q.mediaUrls!.map((url, uidx) => (
                                             // eslint-disable-next-line @next/next/no-img-element
                                             <img key={uidx} src={url} alt="Question Media" style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                        ))}
+                                    </div>
+                                )}
+                                {q.type && q.type !== 'open' && (q.options || []).length > 0 && (
+                                    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {q.options!.map((opt, oidx) => (
+                                            <div key={oidx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--neutral-600)' }}>
+                                                <div style={{
+                                                    width: '12px', height: '12px', border: '1px solid var(--neutral-400)',
+                                                    borderRadius: q.type === 'binary-choice' ? '50%' : '2px'
+                                                }} />
+                                                {opt}
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -78,6 +107,22 @@ export function GuideTab({ study }: { study: Study }) {
                                     {q.mediaUrls!.map((url, uidx) => (
                                         // eslint-disable-next-line @next/next/no-img-element
                                         <img key={uidx} src={url} alt="Question Media" style={{ maxWidth: '120px', borderRadius: '4px', border: '1px solid var(--neutral-200)' }} />
+                                    ))}
+                                </div>
+                            )}
+                            {q.type && q.type !== 'open' && (q.options || []).length > 0 && (
+                                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    {q.options!.map((opt, oidx) => (
+                                        <div key={oidx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--neutral-600)' }}>
+                                            <div style={{
+                                                width: '12px', height: '12px', border: '1px solid var(--neutral-400)',
+                                                borderRadius: q.type === 'binary-choice' ? '50%' : '2px'
+                                            }} />
+                                            <span style={{ fontSize: '11px', color: 'var(--neutral-400)', marginRight: '4px' }}>
+                                                {q.type === 'binary-choice' ? '(one)' : '(many)'}
+                                            </span>
+                                            {opt}
+                                        </div>
                                     ))}
                                 </div>
                             )}

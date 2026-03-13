@@ -80,6 +80,7 @@ export default function NewStudyPage() {
             inputMethod,
             maxQuestions,
             maxFollowUps,
+            smartSkipping: false,
             guide,
             responses: [],
             createdAt: new Date().toISOString(),
@@ -141,6 +142,52 @@ export default function NewStudyPage() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         updated[section] = [...updated[section]] as any;
         updated[section].splice(idx, 1);
+        setGuide(updated);
+    };
+
+    const updateQuestionType = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', idx: number, type: 'open' | 'multiple-choice' | 'binary-choice') => {
+        if (!guide) return;
+        const updated = { ...guide };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const applyToQuestion = (q: any) => ({ ...q, type, options: type === 'open' ? undefined : (q.options || []) });
+
+        if (section === 'mainQuestions') {
+            updated.mainQuestions = [...updated.mainQuestions];
+            updated.mainQuestions[idx] = applyToQuestion(updated.mainQuestions[idx]);
+        } else {
+            const arr = [...updated[section]];
+            arr[idx] = applyToQuestion(arr[idx]);
+            updated[section] = arr;
+        }
+        setGuide(updated);
+    };
+
+    const updateQuestionOption = (section: 'preScreen' | 'mainQuestions' | 'exitQuestions', questionIdx: number, action: 'add' | 'remove' | 'edit', optionIdx?: number, value?: string) => {
+        if (!guide) return;
+        const updated = { ...guide };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const applyToQuestion = (q: any) => {
+            const currentOptions = q.options || [];
+            if (action === 'add') {
+                return { ...q, options: [...currentOptions, value || `Option ${currentOptions.length + 1}`] };
+            } else if (action === 'remove' && optionIdx !== undefined) {
+                return { ...q, options: currentOptions.filter((_: string, i: number) => i !== optionIdx) };
+            } else if (action === 'edit' && optionIdx !== undefined) {
+                const newOptions = [...currentOptions];
+                newOptions[optionIdx] = value || '';
+                return { ...q, options: newOptions };
+            }
+            return q;
+        };
+
+        if (section === 'mainQuestions') {
+            updated.mainQuestions = [...updated.mainQuestions];
+            updated.mainQuestions[questionIdx] = applyToQuestion(updated.mainQuestions[questionIdx]);
+        } else {
+            const arr = [...updated[section]];
+            arr[questionIdx] = applyToQuestion(arr[questionIdx]);
+            updated[section] = arr;
+        }
         setGuide(updated);
     };
 
@@ -437,7 +484,47 @@ export default function NewStudyPage() {
                                                         </div>
                                                     )}
                                                 </div>
-                                                <div style={{ display: 'flex', gap: '4px' }}>
+
+                                                {/* Type label toggle */}
+                                                <div style={{ marginTop: '8px', marginBottom: q.type && q.type !== 'open' ? '8px' : '0' }}>
+                                                    <select
+                                                        value={q.type || 'open'}
+                                                        onChange={(e) => updateQuestionType('mainQuestions', i, e.target.value as any)}
+                                                        style={{ padding: '4px 8px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--neutral-200)', background: 'var(--bg-card)', color: 'var(--neutral-600)' }}
+                                                    >
+                                                        <option value="open">Open Ended</option>
+                                                        <option value="multiple-choice">Multiple Choice (select many)</option>
+                                                        <option value="binary-choice">Multiple Choice (select one)</option>
+                                                    </select>
+                                                </div>
+
+                                                {/* Options Manager */}
+                                                {q.type && q.type !== 'open' && (
+                                                    <div style={{ marginLeft: '12px', borderLeft: '2px solid var(--neutral-200)', paddingLeft: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {(q.options || []).map((opt, optIdx) => (
+                                                            <div key={optIdx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <div style={{
+                                                                    width: '12px', height: '12px', border: '1px solid var(--neutral-400)',
+                                                                    borderRadius: q.type === 'binary-choice' ? '50%' : '2px'
+                                                                }} />
+                                                                <input
+                                                                    type="text"
+                                                                    className="input"
+                                                                    style={{ padding: '2px 8px', fontSize: '13px', height: 'auto', flex: 1 }}
+                                                                    value={opt}
+                                                                    onChange={(e) => updateQuestionOption('mainQuestions', i, 'edit', optIdx, e.target.value)}
+                                                                    placeholder="Option text..."
+                                                                />
+                                                                <button onClick={() => updateQuestionOption('mainQuestions', i, 'remove', optIdx)} className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)' }}><X size={14} strokeWidth={1.5} /></button>
+                                                            </div>
+                                                        ))}
+                                                        <button onClick={() => updateQuestionOption('mainQuestions', i, 'add')} className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start', color: 'var(--primary)', padding: '0 4px' }}>
+                                                            <Plus size={12} strokeWidth={1.5} /> Add Option
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
                                                     {(q.mediaUrls || []).length < 5 && (
                                                         <label className="btn btn-ghost btn-sm" style={{ padding: '0 4px', color: 'var(--neutral-400)', cursor: 'pointer' }} title="Add Media">
                                                             <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {

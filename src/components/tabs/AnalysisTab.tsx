@@ -1,17 +1,26 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useStudies } from '@/lib/StudyContext';
 import { Study, AnalysisInsight } from '@/lib/types';
-import { BarChart3, RefreshCw, Loader2, TrendingUp, Users, Clock, MessageSquare } from 'lucide-react';
+import { BarChart3, RefreshCw, Loader2, TrendingUp, Users, Clock, MessageSquare, Play, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const NEUTRAL_COLORS = ['#0a0a0a', '#525252', '#737373', '#a3a3a3', '#d4d4d4'];
 
 export function AnalysisTab({ study }: { study: Study }) {
-    const [insights, setInsights] = useState<AnalysisInsight[]>([]);
-    const [topTakeaways, setTopTakeaways] = useState<string[]>([]);
+    const { updateStudy } = useStudies();
+    const [insights, setInsights] = useState<AnalysisInsight[]>(study.analysis?.insights || []);
+    const [topTakeaways, setTopTakeaways] = useState<string[]>(study.analysis?.topTakeaways || []);
     const [isLoading, setIsLoading] = useState(false);
-    const [hasAnalyzed, setHasAnalyzed] = useState(false);
+    const [hasAnalyzed, setHasAnalyzed] = useState(!!study.analysis);
+
+    // Video modal state
+    const [videoModalOpen, setVideoModalOpen] = useState(false);
+    const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+    const [isVideoLoading, setIsVideoLoading] = useState(false);
+    const [activeTimestamp, setActiveTimestamp] = useState<number | null>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
 
     const completedResponses = study.responses.filter(r => !r.screenedOut);
     const totalMessages = study.responses.reduce((sum, r) => sum + r.transcript.length, 0);
@@ -33,10 +42,46 @@ export function AnalysisTab({ study }: { study: Study }) {
             if (data.insights) setInsights(data.insights);
             if (data.topTakeaways) setTopTakeaways(data.topTakeaways);
             setHasAnalyzed(true);
+
+            if (data.insights || data.topTakeaways) {
+                updateStudy(study.id, {
+                    analysis: {
+                        insights: data.insights || [],
+                        topTakeaways: data.topTakeaways || [],
+                        updatedAt: new Date().toISOString(),
+                    }
+                });
+            }
         } catch {
             // handle error silently
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const playQuoteBack = async (participantName: string, timestamp: number) => {
+        const response = study.responses.find(r => r.participantName === participantName);
+        if (!response || !response.videoPath) return;
+
+        setVideoModalOpen(true);
+        setIsVideoLoading(true);
+        setActiveVideoUrl(null);
+        setActiveTimestamp(timestamp);
+
+        try {
+            const res = await fetch('/api/playback-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: response.videoPath }),
+            });
+            if (res.ok) {
+                const { publicUrl } = await res.json();
+                setActiveVideoUrl(publicUrl);
+            }
+        } catch (err) {
+            console.error('Failed to load video URL', err);
+        } finally {
+            setIsVideoLoading(false);
         }
     };
 
@@ -135,7 +180,12 @@ export function AnalysisTab({ study }: { study: Study }) {
 
             {/* AI Analysis */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
-                <span className="guide-section-title">AI Insights</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span className="guide-section-title">AI Insights</span>
+                    {study.analysis?.updatedAt && !isLoading && (
+                        <span className="caption">Last updated {new Date(study.analysis.updatedAt).toLocaleString()}</span>
+                    )}
+                </div>
                 <button className="btn btn-sm btn-secondary" onClick={runAnalysis} disabled={isLoading}>
                     {isLoading ? <Loader2 size={12} strokeWidth={1.5} style={{ animation: 'spin 0.6s linear infinite' }} /> : <RefreshCw size={12} strokeWidth={1.5} />}
                     {hasAnalyzed ? 'Refresh' : 'Generate'} Analysis
@@ -183,8 +233,13 @@ export function AnalysisTab({ study }: { study: Study }) {
                                             {quote.videoTimestamp !== undefined && quote.videoTimestamp !== null && (
                                                 <>
                                                     <span>·</span>
-                                                    <button className="btn btn-sm btn-ghost" style={{ fontSize: '11px', padding: '0 4px' }}>
-                                                        ▶ {Math.floor(quote.videoTimestamp / 60)}:{String(Math.floor(quote.videoTimestamp % 60)).padStart(2, '0')}
+                                                    <button
+                                                        className="btn btn-sm btn-ghost"
+                                                        style={{ fontSize: '11px', padding: '0 4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                        onClick={() => playQuoteBack(quote.participantName, quote.videoTimestamp!)}
+                                                    >
+                                                        <Play size={10} strokeWidth={2} />
+                                                        {Math.floor(quote.videoTimestamp / 60)}:{String(Math.floor(quote.videoTimestamp % 60)).padStart(2, '0')}
                                                     </button>
                                                 </>
                                             )}
@@ -193,6 +248,44 @@ export function AnalysisTab({ study }: { study: Study }) {
                                 ))}
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Video Modal Overlay */}
+            {videoModalOpen && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }} onClick={() => setVideoModalOpen(false)}>
+                    <div style={{ background: 'var(--white)', borderRadius: 'var(--radius)', width: '100%', maxWidth: '800px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderBottom: '1px solid var(--neutral-200)' }}>
+                            <h3 style={{ fontSize: '15px', fontWeight: 500 }}>Quote Playback</h3>
+                            <button className="btn-icon" onClick={() => setVideoModalOpen(false)} style={{ background: 'transparent' }}>
+                                <X size={20} strokeWidth={1.5} />
+                            </button>
+                        </div>
+                        <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', position: 'relative' }}>
+                            {isVideoLoading ? (
+                                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <div className="spinner" style={{ animation: 'spin 0.6s linear infinite' }} />
+                                </div>
+                            ) : activeVideoUrl ? (
+                                <video
+                                    ref={videoRef}
+                                    src={activeVideoUrl}
+                                    controls
+                                    autoPlay
+                                    onLoadedMetadata={() => {
+                                        if (videoRef.current && activeTimestamp !== null) {
+                                            videoRef.current.currentTime = Math.max(0, activeTimestamp - 1); // slight buffer
+                                        }
+                                    }}
+                                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                                />
+                            ) : (
+                                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>
+                                    Failed to load video recording.
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

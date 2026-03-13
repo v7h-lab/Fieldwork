@@ -6,6 +6,9 @@ import { MessageSquare, Play, Clock, CheckCircle, XCircle, ChevronDown, ChevronU
 
 export function ResponsesTab({ study }: { study: Study }) {
     const [expandedResponseId, setExpandedResponseId] = useState<string | null>(null);
+    const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+    const [isVideoLoading, setIsVideoLoading] = useState(false);
+    const [viewOriginal, setViewOriginal] = useState<Record<string, boolean>>({});
     if (study.responses.length === 0) {
         return (
             <div className="empty-state">
@@ -59,7 +62,32 @@ export function ResponsesTab({ study }: { study: Study }) {
                             return (
                                 <React.Fragment key={response.id}>
                                     <tr
-                                        onClick={() => setExpandedResponseId(isExpanded ? null : response.id)}
+                                        onClick={async () => {
+                                            const isExpanding = !isExpanded;
+                                            setExpandedResponseId(isExpanding ? response.id : null);
+
+                                            // Reset video state
+                                            setActiveVideoUrl(null);
+
+                                            if (isExpanding && response.videoPath) {
+                                                setIsVideoLoading(true);
+                                                try {
+                                                    const res = await fetch('/api/playback-url', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ filename: response.videoPath }),
+                                                    });
+                                                    if (res.ok) {
+                                                        const { publicUrl } = await res.json();
+                                                        setActiveVideoUrl(publicUrl);
+                                                    }
+                                                } catch (err) {
+                                                    console.error('Failed to load video URL', err);
+                                                } finally {
+                                                    setIsVideoLoading(false);
+                                                }
+                                            }
+                                        }}
                                         style={{ cursor: 'pointer', background: isExpanded ? 'var(--neutral-50)' : 'transparent', transition: 'background 0.2s ease' }}
                                         className="hover-bg-neutral-50"
                                     >
@@ -109,31 +137,80 @@ export function ResponsesTab({ study }: { study: Study }) {
                                         <tr>
                                             <td colSpan={7} style={{ padding: '0', borderBottom: 'none' }}>
                                                 <div style={{ background: 'var(--neutral-50)', padding: 'var(--space-6) var(--space-8)', borderTop: '1px solid var(--neutral-200)', borderBottom: '1px solid var(--neutral-200)' }}>
-                                                    <h3 style={{ fontSize: '15px', fontWeight: 500, marginBottom: 'var(--space-4)', color: 'var(--text-primary)' }}>Transcript</h3>
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-                                                        {pairs.map((pair, idx) => (
-                                                            <div key={idx} style={{ padding: 'var(--space-4)', background: 'white', borderRadius: 'var(--radius)', border: '1px solid var(--neutral-200)' }}>
-                                                                <div style={{ color: 'var(--neutral-500)', marginBottom: '12px', fontSize: '13px', fontWeight: 500, lineHeight: 1.5 }}>
-                                                                    <span style={{ marginRight: '6px', fontWeight: 600 }}>Q:</span>
-                                                                    {pair.q.text}
-                                                                </div>
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                                    {pair.a.length > 0 ? pair.a.map((ans, aIdx) => (
-                                                                        <div key={aIdx} style={{ color: 'var(--text-primary)', fontSize: '15px', lineHeight: 1.6, fontWeight: 400, paddingLeft: '16px', borderLeft: '2px solid var(--primary)' }}>
-                                                                            {ans.text}
+
+                                                    <div style={{ display: 'flex', gap: '32px' }}>
+                                                        {/* Optional Video Player */}
+                                                        {response.videoPath && (
+                                                            <div style={{ width: '400px', flexShrink: 0 }}>
+                                                                <h3 style={{ fontSize: '15px', fontWeight: 500, marginBottom: 'var(--space-4)', color: 'var(--text-primary)' }}>Recording</h3>
+                                                                <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', borderRadius: 'var(--radius)', overflow: 'hidden', position: 'relative' }}>
+                                                                    {isVideoLoading ? (
+                                                                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                            <div className="spinner" style={{ animation: 'spin 0.6s linear infinite' }} />
                                                                         </div>
-                                                                    )) : (
-                                                                        <div style={{ color: 'var(--neutral-400)', fontSize: '14px', fontStyle: 'italic', paddingLeft: '16px', borderLeft: '2px solid var(--neutral-200)' }}>
-                                                                            No response given.
+                                                                    ) : activeVideoUrl ? (
+                                                                        <video
+                                                                            src={activeVideoUrl}
+                                                                            controls
+                                                                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                                                                        />
+                                                                    ) : (
+                                                                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>
+                                                                            Video unavailable
                                                                         </div>
                                                                     )}
                                                                 </div>
                                                             </div>
-                                                        ))}
-                                                        {pairs.length === 0 && (
-                                                            <div className="caption" style={{ fontStyle: 'italic' }}>Transcript is empty.</div>
                                                         )}
+
+                                                        {/* Transcript */}
+                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
+                                                                <h3 style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>Transcript</h3>
+                                                                {response.transcript.some(t => t.translatedText) && (
+                                                                    <button
+                                                                        className="btn btn-sm"
+                                                                        style={{ padding: '4px 8px', fontSize: '12px', background: 'var(--neutral-100)', border: '1px solid var(--neutral-200)', color: 'var(--neutral-600)' }}
+                                                                        onClick={() => setViewOriginal(prev => ({ ...prev, [response.id]: !prev[response.id] }))}
+                                                                    >
+                                                                        {viewOriginal[response.id] ? 'View English Translation' : 'View Original Language'}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+                                                                {pairs.map((pair, idx) => {
+                                                                    const showOriginal = viewOriginal[response.id] ?? false;
+                                                                    const qText = (pair.q.translatedText && !showOriginal) ? pair.q.translatedText : pair.q.text;
+                                                                    return (
+                                                                        <div key={idx} style={{ padding: 'var(--space-4)', background: 'white', borderRadius: 'var(--radius)', border: '1px solid var(--neutral-200)' }}>
+                                                                            <div style={{ color: 'var(--neutral-500)', marginBottom: '12px', fontSize: '13px', fontWeight: 500, lineHeight: 1.5 }}>
+                                                                                <span style={{ marginRight: '6px', fontWeight: 600 }}>Q:</span>
+                                                                                {qText}
+                                                                            </div>
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                                                {pair.a.length > 0 ? pair.a.map((ans, aIdx) => {
+                                                                                    const aText = (ans.translatedText && !showOriginal) ? ans.translatedText : ans.text;
+                                                                                    return (
+                                                                                        <div key={aIdx} style={{ color: 'var(--text-primary)', fontSize: '15px', lineHeight: 1.6, fontWeight: 400, paddingLeft: '16px', borderLeft: '2px solid var(--primary)' }}>
+                                                                                            {aText}
+                                                                                        </div>
+                                                                                    )
+                                                                                }) : (
+                                                                                    <div style={{ color: 'var(--neutral-400)', fontSize: '14px', fontStyle: 'italic', paddingLeft: '16px', borderLeft: '2px solid var(--neutral-200)' }}>
+                                                                                        No response given.
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    )
+                                                                })}
+                                                                {pairs.length === 0 && (
+                                                                    <div className="caption" style={{ fontStyle: 'italic' }}>Transcript is empty.</div>
+                                                                )}
+                                                            </div>
+                                                        </div>
                                                     </div>
+
                                                 </div>
                                             </td>
                                         </tr>

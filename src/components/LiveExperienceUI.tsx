@@ -37,7 +37,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
-    const lastHighEnergyTimeRef = useRef(0);
 
     // Get language from URL or default to en-US
     const lang = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('lang') || 'en-US' : 'en-US';
@@ -66,7 +65,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         8. IMPORTANT: You must NOT speak your internal thinking, planning, or preparation process aloud. Any text like "Initiating the interview process" or "I've ready to begin" must be internal only. ONLY speak direct dialogue intended for the participant.
         9. Start immediately with the first question or introduction without any metadata or labels.
         10. LANGUAGE MANDATE: The participant has selected ${lang} as their preferred language. Even if you hear noise or words that sound like other languages, you MUST interpret them in the context of ${lang} and you MUST ONLY respond and transcribe in English (en-US). Do NOT use any non-English characters or scripts.
-        11. PROACTIVITY: If the participant is silent for more than 3-4 seconds after a question, or if their response is very brief (e.g. one word), DO NOT wait. Proactively offer a gentle nudge or a contextual follow-up to keep the research moving. You are leading this interview.
     `, [study, participantName, lang]);
 
     // Stability: Wrap onMessage and onComplete in refs so connect doesn't restart when they (rarely) change
@@ -142,18 +140,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             }
         };
         source.start();
-    }, []);
-
-    const commitTurn = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            console.log("Manually committing turn...");
-            wsRef.current.send(JSON.stringify({
-                client_content: {
-                    turns: [],
-                    turn_complete: true
-                }
-            }));
-        }
     }, []);
 
     const connect = useCallback(() => {
@@ -435,56 +421,25 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     setShowMuteReminder(false);
                 }
 
-                // Buffer audio to send larger chunks (lower WebSocket frequency)
-                audioBufferRef.current.push(new Float32Array(inputData));
-                if (audioBufferRef.current.length < 10) return; // Wait for ~1280 samples (~80ms)
-
-                const totalLength = audioBufferRef.current.reduce((acc, val) => acc + val.length, 0);
-                const unified = new Float32Array(totalLength);
-                let offset = 0;
-                for (const chunk of audioBufferRef.current) {
-                    unified.set(chunk, offset);
-                    offset += chunk.length;
-                }
-                audioBufferRef.current = [];
-
-                const pcm16 = new Int16Array(unified.length);
-                for (let i = 0; i < unified.length; i++) {
-                    pcm16[i] = Math.max(-1, Math.min(1, unified[i])) * 0x7FFF;
+                // Send audio chunks to Gemini
+                // We no longer use gating or thresholds to ensure maximum recognition
+                const pcm16 = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
                 }
 
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
                     const pcmData = new Uint8Array(pcm16.buffer);
                     const base64 = btoa(String.fromCharCode(...pcmData));
 
-                    let energy = 0;
-                    for (let i = 0; i < unified.length; i++) energy += Math.abs(unified[i]);
-                    const avgEnergy = energy / unified.length;
-
-                    // VAD Gating with 500ms Hangover
-                    // We send audio if current energy is high OR if we're in the "hangover" period after high energy
-                    const isHighEnergy = avgEnergy > 0.002;
-                    const now = Date.now();
-                    if (isHighEnergy) {
-                        lastHighEnergyTimeRef.current = now;
-                    }
-
-                    const isInHangover = (now - lastHighEnergyTimeRef.current) < 500;
-
-                    if (isHighEnergy || isInHangover) {
-                        if (Math.random() < 0.05) {
-                            console.log(`Mic active: sending ${base64.length} bytes, avg energy: ${avgEnergy.toFixed(4)}${isInHangover && !isHighEnergy ? ' (hangover)' : ''}`);
+                    wsRef.current.send(JSON.stringify({
+                        realtime_input: {
+                            media_chunks: [{ data: base64, mime_type: "audio/pcm;rate=16000" }]
                         }
-                        wsRef.current.send(JSON.stringify({
-                            realtime_input: {
-                                media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
-                            }
-                        }));
-                    } else if (Math.random() < 0.01) {
-                        console.log(`Gating mic: avg energy ${avgEnergy.toFixed(4)} too low and hangover expired`);
-                    }
+                    }));
                 }
             };
+
 
             source.connect(workletNode);
             workletNode.connect(audioContextRef.current.destination);
@@ -623,30 +578,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 >
                     {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
                 </button>
-
-                {!isMuted && currentUserText.trim() && (
-                    <button
-                        onClick={commitTurn}
-                        style={{
-                            padding: '12px 20px',
-                            background: 'white',
-                            color: 'var(--black)',
-                            border: '1px solid var(--neutral-200)',
-                            borderRadius: '30px',
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-                            animation: 'fadeInUp 0.3s ease-out'
-                        }}
-                    >
-                        <MessageSquare size={18} />
-                        Finish Response
-                    </button>
-                )}
             </div>
 
             <style jsx>{`

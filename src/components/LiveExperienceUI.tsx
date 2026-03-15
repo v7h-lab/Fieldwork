@@ -104,9 +104,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         audioQueueRef.current = [];
         isPlayingRef.current = false;
         setIsAgentSpeaking(false);
-        // Aggressive state flush on stop/interrupt
-        accumulatedTextRef.current = '';
-        setCurrentAgentText('');
     }, []);
 
     const playNextChunk = useCallback(async () => {
@@ -241,11 +238,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 console.log('Gemini Live Interrupted');
                 stopPlayback();
 
-                // Flush user text if interrupted
-                if (accumulatedUserTextRef.current.trim()) {
+                // Prevent agent text from disappearing: Commit partial text to transcript
+                if (accumulatedTextRef.current.trim()) {
                     const entry: TranscriptEntry = {
-                        role: 'participant',
-                        text: accumulatedUserTextRef.current,
+                        role: 'agent',
+                        text: accumulatedTextRef.current + "...", // Indicate interruption
                         timestamp: new Date().toISOString(),
                         videoTimestamp: (Date.now() - startTime) / 1000
                     };
@@ -253,9 +250,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     transcriptRef.current = updated;
                     setTranscript(updated);
                     onMessageRef.current(entry);
-                    accumulatedUserTextRef.current = '';
-                    setCurrentUserText('');
                 }
+
+                // Clear agent buffers after committing
+                accumulatedTextRef.current = '';
+                setCurrentAgentText('');
 
                 // Reset manual VAD states on interruption
                 hasSentActivityStartRef.current = false;
@@ -484,10 +483,10 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     for (let i = 0; i < unified.length; i++) energy += Math.abs(unified[i]);
                     const avgEnergy = energy / unified.length;
 
-                    // VAD Gating: Only send if energy is above threshold (0.002)
-                    // Lowered from 0.005 to be more sensitive to quiet speech
+                    // VAD Gating: Only send if energy is above threshold
                     if (avgEnergy > 0.002) {
-                        if (!hasSentActivityStartRef.current) {
+                        // Only trigger ActivityStart on significant speech (0.005) to avoid cutting agent off
+                        if (!hasSentActivityStartRef.current && avgEnergy > 0.005) {
                             console.log("Speech detected: sending ActivityStart");
                             wsRef.current.send(JSON.stringify({
                                 realtime_input: {

@@ -169,12 +169,15 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     generation_config: {
                         response_modalities: ["AUDIO"],
                         speech_config: {
-                            voice_config: { prebuilt_voice_config: { voice_name: "Aoede" } },
-                            language_code: lang // Pin ASR language to URL param (en-US or hi-IN)
+                            voice_config: { prebuilt_voice_config: { voice_name: "Aoede" } }
                         },
                         thinking_config: { include_thoughts: false }
                     },
-                    input_audio_transcription: {},
+                    input_audio_transcription: {
+                        config: {
+                            language_code: lang
+                        }
+                    },
                     output_audio_transcription: {}, // Enable transcription of model output
                     realtime_input_config: {
                         automatic_activity_detection: {
@@ -203,6 +206,17 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     }
                 }));
             }
+        };
+
+        const filterTextByLanguage = (text: string) => {
+            if (!text) return "";
+            // If primary language is en-US, strip non-Latin/basic punctuation characters
+            // Specifically targeting Devanagari (Hindi) leakage: \u0900-\u097F
+            if (lang.startsWith('en')) {
+                return text.replace(/[\u0900-\u097F]/g, '').trim();
+            }
+            // If primary language is hi-IN, we allow Devanagari
+            return text;
         };
 
         ws.onmessage = async (event) => {
@@ -269,7 +283,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 // Handle User Transcription (both field names used by Gemini)
                 const userTranscript = data.serverContent.userTranscription || data.serverContent.inputTranscription;
                 if (userTranscript) {
-                    const userText = userTranscript.text || userTranscript.parts?.[0]?.text || "";
+                    let userText = userTranscript.text || userTranscript.parts?.[0]?.text || "";
+                    userText = filterTextByLanguage(userText); // Harden language adherence
                     if (userText) {
                         // Better accumulation: Only append if it's not already cumulative
                         if (userText.length > accumulatedUserTextRef.current.length && userText.startsWith(accumulatedUserTextRef.current)) {
@@ -304,7 +319,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
 
                 // Handle Agent Transcription (Streaming parts)
                 if (data.serverContent.outputTranscription) {
-                    const agentText = data.serverContent.outputTranscription.text || "";
+                    let agentText = data.serverContent.outputTranscription.text || "";
+                    agentText = filterTextByLanguage(agentText); // Harden language adherence
                     if (agentText) {
                         accumulatedTextRef.current += agentText;
                         setCurrentAgentText(accumulatedTextRef.current);

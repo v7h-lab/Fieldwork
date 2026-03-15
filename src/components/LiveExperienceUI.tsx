@@ -402,7 +402,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             console.log("Submitting response via ActivityEnd");
             wsRef.current.send(JSON.stringify({
                 realtime_input: {
-                    activity_end: true
+                    activity_end: {}
                 }
             }));
             hasSentActivityStartRef.current = false;
@@ -491,7 +491,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                             console.log("Speech detected: sending ActivityStart");
                             wsRef.current.send(JSON.stringify({
                                 realtime_input: {
-                                    activity_start: true
+                                    activity_start: {}
                                 }
                             }));
                             hasSentActivityStartRef.current = true;

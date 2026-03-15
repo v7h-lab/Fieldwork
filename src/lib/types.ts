@@ -43,6 +43,8 @@ export interface ParticipantResponse {
   videoPath?: string;
   videoDuration?: number;
   screenedOut: boolean;
+  sentiment?: 'Positive' | 'Neutral' | 'Negative';
+  sentimentScore?: number;
 }
 
 export interface Study {
@@ -52,6 +54,7 @@ export interface Study {
   goals: string;
   audience: string;
   inputMethod: InputMethod;
+  experienceMode: 'turn-taking' | 'live';
   maxQuestions: number;
   maxFollowUps: number;
   smartSkipping: boolean;

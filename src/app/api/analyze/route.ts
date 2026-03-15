@@ -35,8 +35,13 @@ Analyze all responses and generate insights. Return a JSON object:
       ]
     }
   ],
-  "responseRate": number,
-  "avgDuration": number,
+  "participantAnalysis": [
+    {
+      "participantId": "id",
+      "sentiment": "Positive" | "Neutral" | "Negative",
+      "sentimentScore": 0.0-1.0
+    }
+  ],
   "topTakeaways": ["string"]
 }
 
@@ -47,6 +52,7 @@ Guidelines:
 - Be specific and actionable in summaries
 - Group related findings thematically
 - Include video timestamps for quotes when available
+- For participantAnalysis, categorize the overall sentiment of their interview and provide a score (1.0 = highly positive/confident, 0.0 = highly negative/frustrated).
 
 Return ONLY valid JSON.`;
 

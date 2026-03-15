@@ -15,6 +15,11 @@ const INPUT_METHODS: { value: InputMethod; label: string; desc: string; icon: Re
     { value: 'video-screenshare', label: 'Video + Screen Share', desc: 'Video with screen sharing for usability tests', icon: <Monitor size={18} strokeWidth={1.5} /> },
 ];
 
+const EXPERIENCE_MODES = [
+    { value: 'turn-taking', label: 'Turn-taking (Manual)', desc: 'AI narrates first, then participant clicks "Begin" to respond. Best for structured data.', icon: <Pencil size={18} strokeWidth={1.5} /> },
+    { value: 'live', label: 'Live (Bidirectional)', desc: 'Natural, real-time conversation via Gemini Live. Supports interruptions and tonal analysis.', icon: <Loader2 size={18} strokeWidth={1.5} /> },
+];
+
 export default function NewStudyPage() {
     const params = useParams();
     const router = useRouter();
@@ -26,6 +31,7 @@ export default function NewStudyPage() {
     const [goals, setGoals] = useState('');
     const [audience, setAudience] = useState('');
     const [inputMethod, setInputMethod] = useState<InputMethod>('audio-video');
+    const [experienceMode, setExperienceMode] = useState<'turn-taking' | 'live'>('turn-taking');
     const [maxQuestions, setMaxQuestions] = useState(5);
     const [maxFollowUps, setMaxFollowUps] = useState(2);
     const [studyName, setStudyName] = useState('');
@@ -78,6 +84,7 @@ export default function NewStudyPage() {
             goals,
             audience,
             inputMethod,
+            experienceMode,
             maxQuestions,
             maxFollowUps,
             smartSkipping: false,
@@ -316,6 +323,26 @@ export default function NewStudyPage() {
 
                 {step === 2 && (
                     <div>
+                        <div className="form-group">
+                            <label className="form-label">Experience Mode</label>
+                            <div className="radio-group">
+                                {EXPERIENCE_MODES.map(mode => (
+                                    <div
+                                        key={mode.value}
+                                        className={`radio-option ${experienceMode === mode.value ? 'selected' : ''}`}
+                                        onClick={() => setExperienceMode(mode.value as any)}
+                                    >
+                                        <div className="radio-dot"><div className="radio-dot-inner" /></div>
+                                        <div style={{ flex: 1 }}>
+                                            <div className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                {mode.icon} {mode.label}
+                                            </div>
+                                            <div className="radio-desc">{mode.desc}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                         <div className="form-group">
                             <label className="form-label">Interview Medium</label>
                             <div className="radio-group">

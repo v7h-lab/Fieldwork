@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Study, TranscriptEntry, ParticipantResponse } from '@/lib/types';
 import { getTranslation } from '@/lib/translations';
+import { LiveExperienceUI } from '@/components/LiveExperienceUI';
 import { Mic, MicOff, Compass, CheckCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, Pause } from 'lucide-react';
 
 type InterviewState = 'loading' | 'name' | 'active' | 'completed' | 'error';
@@ -35,6 +36,8 @@ function InterviewPageContent() {
     const [interviewStartTime] = useState<number>(Date.now());
     const [questionCount, setQuestionCount] = useState(0);
     const [sessionId] = useState(() => `interview_${studyId}_${Date.now()}`);
+    const [isManualReady, setIsManualReady] = useState(false); // For turn-taking mode
+
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -193,7 +196,13 @@ function InterviewPageContent() {
 
             audioEl.onended = () => {
                 setIsSpeaking(false);
-                startListening();
+                if (study?.experienceMode === 'live') {
+                    // In live mode, we might want to auto-listen or handled by LiveComponent
+                } else if (study?.experienceMode === 'turn-taking') {
+                    setIsManualReady(true);
+                } else {
+                    startListening();
+                }
             };
 
             await audioEl.play();
@@ -207,7 +216,11 @@ function InterviewPageContent() {
             if (preferred) utterance.voice = preferred;
             utterance.onend = () => {
                 setIsSpeaking(false);
-                startListening();
+                if (study?.experienceMode === 'turn-taking') {
+                    setIsManualReady(true);
+                } else {
+                    startListening();
+                }
             };
             window.speechSynthesis.speak(utterance);
         }
@@ -277,6 +290,9 @@ function InterviewPageContent() {
                 setSelectedOption(null);
 
                 // Read the question aloud
+                if (study.experienceMode === 'turn-taking') {
+                    setIsManualReady(false);
+                }
                 speak(data.message);
 
                 if (data.action === 'end') {
@@ -489,7 +505,8 @@ function InterviewPageContent() {
         setState('active');
 
         // Play a fast, immediate native greeting to mask the API latency of generating the first question
-        if (ttsEnabled && typeof window !== 'undefined' && window.speechSynthesis) {
+        // Play a fast, immediate native greeting for manual mode to mask AI latency
+        if (study?.experienceMode !== 'live' && ttsEnabled && typeof window !== 'undefined' && window.speechSynthesis) {
             const utterance = new SpeechSynthesisUtterance(`Hi ${participantName}, give me just a second to get ready.`);
             const voices = window.speechSynthesis.getVoices();
             const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google'));
@@ -498,8 +515,12 @@ function InterviewPageContent() {
         }
 
         // Initial agent greeting
-        getAgentResponse([]);
-        setTimeout(() => startListening(), 2000);
+        if (study?.experienceMode !== 'live') {
+            getAgentResponse([]);
+            if (study?.experienceMode !== 'turn-taking') {
+                setTimeout(() => startListening(), 2000);
+            }
+        }
     };
 
     // Cleanup
@@ -705,7 +726,7 @@ function InterviewPageContent() {
                     )}
 
                     {/* Listening indicator */}
-                    {isListening && (
+                    {isListening && study?.experienceMode !== 'live' && (
                         <div style={styles.listeningIndicator}>
                             <div style={styles.listeningDot} />
                             <span>{t('listening')}</span>
@@ -713,130 +734,187 @@ function InterviewPageContent() {
                     )}
                 </div>
 
-                {/* Question panel (right side) */}
-                <div style={styles.questionPanel}>
-                    {/* Current question */}
-                    <div style={styles.questionDisplay}>
-                        <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '12px' }}>
-                            {isSending ? t('thinking') : `Question ${questionCount}`}
-                        </div>
-                        {isSending ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div className="spinner" />
-                                <span style={{ fontSize: '14px', color: 'var(--neutral-400)' }}>{t('thinking')}</span>
-                            </div>
-                        ) : (
-                            <p style={{ fontSize: '18px', fontWeight: 400, lineHeight: 1.6, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
-                                {currentQuestion || 'Starting interview…'}
-                            </p>
-                        )}
+                {/* Question panel (right side) / Live Experience */}
+                {study?.experienceMode === 'live' ? (
+                    <div style={{ flex: 1, height: '100%', background: 'var(--bg-card)' }}>
+                        <LiveExperienceUI
+                            study={study}
+                            participantName={participantName}
+                            onMessage={(entry) => setMessages(prev => [...prev, entry])}
+                            onComplete={(finalTranscript) => completeInterview(finalTranscript)}
+                            startTime={interviewStartTime}
+                        />
                     </div>
-
-                    {/* Live transcription / Interactive Options */}
-                    <div style={styles.transcriptArea}>
-                        {activeOptions.length > 0 ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)', marginBottom: '4px' }}>
-                                    {activeQuestionType === 'binary-choice' ? 'Select one option:' : 'Select many options (experimental):'}
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {activeOptions.map((opt, idx) => (
-                                        <label key={idx} style={{
-                                            display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 18px',
-                                            background: selectedOption === opt ? 'rgba(0,0,0,0.03)' : 'var(--bg-page)',
-                                            border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-200)'}`,
-                                            borderRadius: 'var(--radius-sm)', cursor: 'pointer', transition: 'all 0.2s',
-                                        }}>
-                                            <div style={{
-                                                width: '18px', height: '18px',
-                                                border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-400)'}`,
-                                                borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '4px',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                            }}>
-                                                {selectedOption === opt && <div style={{ width: '10px', height: '10px', background: 'var(--black)', borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '2px' }} />}
-                                            </div>
-                                            <span style={{ fontSize: '15px', fontWeight: 400, flex: 1, color: 'var(--text-primary)' }}>{opt}</span>
-                                            <input
-                                                type="radio"
-                                                name="interactive-option"
-                                                value={opt}
-                                                checked={selectedOption === opt}
-                                                onChange={() => setSelectedOption(opt)}
-                                                style={{ display: 'none' }}
-                                            />
-                                        </label>
-                                    ))}
-                                </div>
+                ) : (
+                    <div style={styles.questionPanel}>
+                        {/* Current question */}
+                        <div style={styles.questionDisplay}>
+                            <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '12px' }}>
+                                {isSending ? t('thinking') : `Question ${questionCount}`}
                             </div>
-                        ) : (
-                            <>
-                                <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '8px' }}>
-                                    Your Response
+                            {isSending ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div className="spinner" />
+                                    <span style={{ fontSize: '14px', color: 'var(--neutral-400)' }}>{t('thinking')}</span>
                                 </div>
-                                <div style={styles.transcriptText}>
-                                    {liveTranscript || (
-                                        <span style={{ color: 'var(--neutral-300)', fontStyle: 'italic' }}>
-                                            {isListening ? 'Speak your response…' : 'Press the microphone to respond'}
-                                        </span>
+                            ) : (
+                                <p style={{ fontSize: '18px', fontWeight: 400, lineHeight: 1.6, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+                                    {currentQuestion || 'Starting interview…'}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Live transcription / Interactive Options */}
+                        <div style={styles.transcriptArea}>
+                            {activeOptions.length > 0 ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--neutral-500)', marginBottom: '4px' }}>
+                                        {activeQuestionType === 'binary-choice' ? 'Select one option:' : 'Select many options (experimental):'}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        {activeOptions.map((opt, idx) => (
+                                            <label key={idx} style={{
+                                                display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 18px',
+                                                background: selectedOption === opt ? 'rgba(0,0,0,0.03)' : 'var(--bg-page)',
+                                                border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-200)'}`,
+                                                borderRadius: 'var(--radius-sm)', cursor: 'pointer', transition: 'all 0.2s',
+                                            }}>
+                                                <div style={{
+                                                    width: '18px', height: '18px',
+                                                    border: `1px solid ${selectedOption === opt ? 'var(--black)' : 'var(--neutral-400)'}`,
+                                                    borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '4px',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                                }}>
+                                                    {selectedOption === opt && <div style={{ width: '10px', height: '10px', background: 'var(--black)', borderRadius: activeQuestionType === 'binary-choice' ? '50%' : '2px' }} />}
+                                                </div>
+                                                <span style={{ fontSize: '15px', fontWeight: 400, flex: 1, color: 'var(--text-primary)' }}>{opt}</span>
+                                                <input
+                                                    type="radio"
+                                                    name="interactive-option"
+                                                    value={opt}
+                                                    checked={selectedOption === opt}
+                                                    onChange={() => setSelectedOption(opt)}
+                                                    style={{ display: 'none' }}
+                                                />
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div style={{ fontSize: '10px', fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase' as const, color: 'var(--neutral-400)', marginBottom: '8px' }}>
+                                        Your Response
+                                    </div>
+                                    <div style={styles.transcriptText}>
+                                        {liveTranscript || (
+                                            <span style={{ color: 'var(--neutral-300)', fontStyle: 'italic' }}>
+                                                {isListening ? 'Speak your response…' : 'Press the microphone to respond'}
+                                            </span>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Controls */}
+                        <div style={styles.controls}>
+                            {study?.experienceMode === 'turn-taking' ? (
+                                <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                                    {!isListening && !isManualReady && !isSpeaking && !isSending && (
+                                        <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} disabled>
+                                            AI is thinking...
+                                        </button>
+                                    )}
+                                    {!isListening && isManualReady && !isSpeaking && !isSending && (
+                                        <button
+                                            className="btn btn-primary btn-lg"
+                                            style={{ flex: 1, padding: '12px', fontSize: '15px' }}
+                                            onClick={() => {
+                                                setIsManualReady(false);
+                                                startListening();
+                                            }}
+                                        >
+                                            Begin response
+                                        </button>
+                                    )}
+                                    {isListening && (
+                                        <button
+                                            className="btn btn-primary btn-lg"
+                                            style={{ flex: 1, padding: '12px', fontSize: '15px', background: 'var(--black)' }}
+                                            onClick={() => {
+                                                if (activeOptions.length > 0 && selectedOption) {
+                                                    submitOptionResponse(selectedOption);
+                                                } else {
+                                                    submitResponse(false);
+                                                }
+                                            }}
+                                            disabled={activeOptions.length > 0 && !selectedOption}
+                                        >
+                                            {isSending ? t('saving') : 'Submit response'}
+                                        </button>
+                                    )}
+                                    {(isSpeaking || isSending) && (
+                                        <div style={{ flex: 1, textAlign: 'center', padding: '12px', color: 'var(--neutral-400)', fontSize: '14px' }}>
+                                            {isSpeaking ? 'AI is speaking...' : t('thinking')}
+                                        </div>
                                     )}
                                 </div>
-                            </>
-                        )}
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={isListening ? stopListening : startListening}
+                                        style={{
+                                            ...styles.micButton,
+                                            background: isListening ? 'var(--black)' : 'var(--neutral-100)',
+                                            color: isListening ? '#fff' : 'var(--text-primary)',
+                                        }}
+                                        title={isListening ? 'Stop listening' : 'Start listening'}
+                                    >
+                                        {isListening ? <MicOff size={20} strokeWidth={1.5} /> : <Mic size={20} strokeWidth={1.5} />}
+                                    </button>
+
+                                    {/* Interrupt button */}
+                                    {(isSpeaking || isSending) && !isListening && (
+                                        <button
+                                            className="btn"
+                                            onClick={interruptAgent}
+                                            style={{
+                                                flex: 0.5,
+                                                padding: '12px',
+                                                fontSize: '14px',
+                                                background: 'var(--neutral-100)',
+                                                color: 'var(--text-primary)',
+                                                border: '1px solid var(--neutral-200)',
+                                            }}
+                                            title="Interrupt the AI and speak"
+                                        >
+                                            Interrupt AI
+                                        </button>
+                                    )}
+
+                                    <button
+                                        className="btn btn-primary btn-lg"
+                                        onClick={() => {
+                                            if (activeOptions.length > 0) {
+                                                if (selectedOption) submitOptionResponse(selectedOption);
+                                            } else {
+                                                submitResponse(false);
+                                            }
+                                        }}
+                                        disabled={
+                                            (activeOptions.length > 0 && !selectedOption) ||
+                                            (activeOptions.length === 0 && !liveTranscript.trim() && !isListening) ||
+                                            isSending
+                                        }
+                                        style={{ flex: 1, padding: '12px', fontSize: '15px', fontWeight: 500 }}
+                                    >
+                                        {isSending ? t('saving') : t('submit')}
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
-
-                    {/* Controls */}
-                    <div style={styles.controls}>
-                        <button
-                            onClick={isListening ? stopListening : startListening}
-                            style={{
-                                ...styles.micButton,
-                                background: isListening ? 'var(--black)' : 'var(--neutral-100)',
-                                color: isListening ? '#fff' : 'var(--text-primary)',
-                            }}
-                            title={isListening ? 'Stop listening' : 'Start listening'}
-                        >
-                            {isListening ? <MicOff size={20} strokeWidth={1.5} /> : <Mic size={20} strokeWidth={1.5} />}
-                        </button>
-
-                        {/* Interrupt button */}
-                        {(isSpeaking || isSending) && !isListening && (
-                            <button
-                                className="btn"
-                                onClick={interruptAgent}
-                                style={{
-                                    flex: 0.5,
-                                    padding: '12px',
-                                    fontSize: '14px',
-                                    background: 'var(--neutral-100)',
-                                    color: 'var(--text-primary)',
-                                    border: '1px solid var(--neutral-200)',
-                                }}
-                                title="Interrupt the AI and speak"
-                            >
-                                Interrupt AI
-                            </button>
-                        )}
-
-                        <button
-                            className="btn btn-primary btn-lg"
-                            onClick={() => {
-                                if (activeOptions.length > 0) {
-                                    if (selectedOption) submitOptionResponse(selectedOption);
-                                } else {
-                                    submitResponse(false);
-                                }
-                            }}
-                            disabled={
-                                (activeOptions.length > 0 && !selectedOption) ||
-                                (activeOptions.length === 0 && !liveTranscript.trim() && !isListening) ||
-                                isSending
-                            }
-                            style={{ flex: 1, padding: '12px', fontSize: '15px', fontWeight: 500 }}
-                        >
-                            {isSending ? t('saving') : t('submit')}
-                        </button>
-                    </div>
-                </div>
+                )}
             </div>
         </div>
     );

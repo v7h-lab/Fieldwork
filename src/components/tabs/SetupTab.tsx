@@ -15,7 +15,6 @@ export function SetupTab({ study }: { study: Study }) {
     const [copied, setCopied] = useState(false);
     const [selectedLang, setSelectedLang] = useState('en-US');
     const [isDeleting, setIsDeleting] = useState(false);
-    const [isDeletingConfirmed, setIsDeletingConfirmed] = useState(false);
     const { updateStudy, deleteStudy } = useStudies();
     const isPaused = study.status === 'paused';
 
@@ -46,10 +45,7 @@ export function SetupTab({ study }: { study: Study }) {
     };
 
     const confirmDelete = () => {
-        if (isDeletingConfirmed) {
-            deleteStudy(study.id);
-            // The parent component should handle redirect if currently viewing this study
-        }
+        deleteStudy(study.id);
     };
 
     return (
@@ -70,20 +66,10 @@ export function SetupTab({ study }: { study: Study }) {
                             This action cannot be undone. All responses and insights for <strong>{study.name}</strong> will be permanently deleted.
                         </p>
 
-                        {!isDeletingConfirmed ? (
-                            <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsDeleting(false)}>Cancel</button>
-                                <button className="btn" style={{ flex: 1, backgroundColor: 'var(--error-color, #e11d48)', color: 'white' }} onClick={() => setIsDeletingConfirmed(true)}>I understand</button>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                                <p style={{ fontSize: '13px', color: 'var(--neutral-500)', textAlign: 'center' }}>Are you absolutely sure?</p>
-                                <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                                    <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setIsDeleting(false); setIsDeletingConfirmed(false); }}>Keep Study</button>
-                                    <button className="btn" style={{ flex: 1, backgroundColor: 'var(--text-primary)', color: 'white' }} onClick={confirmDelete}>Yes, Delete it</button>
-                                </div>
-                            </div>
-                        )}
+                        <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsDeleting(false)}>Cancel</button>
+                            <button className="btn" style={{ flex: 1, backgroundColor: 'var(--error-color, #e11d48)', color: 'white' }} onClick={confirmDelete}>Delete Study</button>
+                        </div>
                     </div>
                 </div>
             )}

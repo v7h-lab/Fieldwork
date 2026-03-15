@@ -31,10 +31,15 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const isPlayingRef = useRef(false);
     const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const accumulatedTextRef = useRef('');
+    const accumulatedTextRef = useRef(''); // Agent
+    const accumulatedUserTextRef = useRef(''); // Participant
+    const [currentUserText, setCurrentUserText] = useState('');
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
+
+    // Get language from URL or default to en-US
+    const lang = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('lang') || 'en-US' : 'en-US';
 
     useEffect(() => {
         isMutedRef.current = isMuted;
@@ -59,7 +64,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         7. Maintain a professional yet empathetic tone.
         8. IMPORTANT: You must NOT speak your internal thinking, planning, or preparation process aloud. Any text like "Initiating the interview process" or "I've ready to begin" must be internal only. ONLY speak direct dialogue intended for the participant.
         9. Start immediately with the first question or introduction without any metadata or labels.
-    `, [study, participantName]);
+        10. LANGUAGE MANDATE: The participant has selected ${lang} as their preferred language. Even if you hear noise or words that sound like other languages, you MUST interpret them in the context of ${lang} and you MUST ONLY respond and transcribe in English (en-US). Do NOT use any non-English characters or scripts.
+    `, [study, participantName, lang]);
 
     // Stability: Wrap onMessage and onComplete in refs so connect doesn't restart when they (rarely) change
     const onMessageRef = useRef(onMessage);
@@ -212,6 +218,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 return;
             }
 
+            console.log('Server Message:', JSON.stringify(data));
+
             // Debug: Log unexpected server content types to see why transcripts are missing
             if (data.serverContent && !data.serverContent.modelTurn && !data.serverContent.userTranscription && !data.serverContent.interrupted) {
                 console.log('Received raw server content:', JSON.stringify(data.serverContent));
@@ -221,17 +229,52 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             if (data.serverContent?.interrupted) {
                 console.log('Gemini Live Interrupted');
                 stopPlayback();
+
+                // Flush user text if interrupted
+                if (accumulatedUserTextRef.current.trim()) {
+                    const entry: TranscriptEntry = {
+                        role: 'participant',
+                        text: accumulatedUserTextRef.current,
+                        timestamp: new Date().toISOString(),
+                        videoTimestamp: (Date.now() - startTime) / 1000
+                    };
+                    const updated = [...transcriptRef.current, entry];
+                    transcriptRef.current = updated;
+                    setTranscript(updated);
+                    onMessageRef.current(entry);
+                    accumulatedUserTextRef.current = '';
+                    setCurrentUserText('');
+                }
                 return;
             }
 
             if (data.serverContent) {
-                // Handle User Transcription
-                if (data.serverContent.userTranscription) {
-                    const userText = data.serverContent.userTranscription.text || data.serverContent.userTranscription.parts?.[0]?.text || "";
+                // Handle User Transcription (both field names used by Gemini)
+                const userTranscript = data.serverContent.userTranscription || data.serverContent.inputTranscription;
+                if (userTranscript) {
+                    const userText = userTranscript.text || userTranscript.parts?.[0]?.text || "";
                     if (userText) {
+                        accumulatedUserTextRef.current += userText;
+                        setCurrentUserText(accumulatedUserTextRef.current);
+                    }
+                }
+
+                // Handle Agent Transcription (Streaming parts)
+                if (data.serverContent.outputTranscription) {
+                    const agentText = data.serverContent.outputTranscription.text || "";
+                    if (agentText) {
+                        accumulatedTextRef.current += agentText;
+                        setCurrentAgentText(accumulatedTextRef.current);
+                    }
+                }
+
+                const modelTurn = data.serverContent.modelTurn;
+                if (modelTurn) {
+                    // Agent started speaking, flush user buffer if it exists
+                    if (accumulatedUserTextRef.current.trim()) {
                         const entry: TranscriptEntry = {
                             role: 'participant',
-                            text: userText,
+                            text: accumulatedUserTextRef.current,
                             timestamp: new Date().toISOString(),
                             videoTimestamp: (Date.now() - startTime) / 1000
                         };
@@ -239,10 +282,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         transcriptRef.current = updated;
                         setTranscript(updated);
                         onMessageRef.current(entry);
+                        accumulatedUserTextRef.current = '';
+                        setCurrentUserText('');
                     }
                 }
 
-                const modelTurn = data.serverContent.modelTurn;
                 if (modelTurn && modelTurn.parts) {
                     for (const part of modelTurn.parts) {
                         if (part.inlineData) {
@@ -265,6 +309,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 }
 
                 if (data.serverContent.turnComplete) {
+                    // Flush Agent Text
                     const text = accumulatedTextRef.current;
                     if (text.trim()) {
                         const entry: TranscriptEntry = {
@@ -278,17 +323,36 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         setTranscript(updated);
                         onMessageRef.current(entry);
 
-                        // Reliable termination check
+                        // Reliable termination check: strictly keyword based
                         const lowerText = text.toLowerCase();
-                        if (lowerText.includes("thank you for your time") ||
+                        const hasEndKeywords = lowerText.includes("thank you for your time") ||
                             lowerText.includes("concludes our interview") ||
-                            lowerText.includes("concludes our study")) {
-                            console.log("Session complete detected, finishing in 5s...");
-                            setTimeout(() => onCompleteRef.current(updated), 5000);
+                            lowerText.includes("concludes our study") ||
+                            (lowerText.includes("thank you") && lowerText.includes("concludes"));
+
+                        if (hasEndKeywords) {
+                            console.log("Session conclusion detected via keywords, finishing in 3s...");
+                            setTimeout(() => onCompleteRef.current(updated), 3000);
                         }
                     }
                     accumulatedTextRef.current = '';
                     setCurrentAgentText('');
+
+                    // Flush User Text (if terminal hasn't already)
+                    if (accumulatedUserTextRef.current.trim()) {
+                        const entry: TranscriptEntry = {
+                            role: 'participant',
+                            text: accumulatedUserTextRef.current,
+                            timestamp: new Date().toISOString(),
+                            videoTimestamp: (Date.now() - startTime) / 1000
+                        };
+                        const updated = [...transcriptRef.current, entry];
+                        transcriptRef.current = updated;
+                        setTranscript(updated);
+                        onMessageRef.current(entry);
+                        accumulatedUserTextRef.current = '';
+                        setCurrentUserText('');
+                    }
                 }
             }
         };
@@ -376,17 +440,27 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 }
 
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-                    if (Math.random() < 0.05) { // Periodically log energy to verify mic
-                        let energy = 0;
-                        for (let i = 0; i < inputData.length; i++) energy += Math.abs(inputData[i]);
-                        console.log(`Mic active: sending ${base64.length} bytes, avg energy: ${(energy / inputData.length).toFixed(4)}`);
-                    }
-                    wsRef.current.send(JSON.stringify({
-                        realtime_input: {
-                            media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
+                    const pcmData = new Uint8Array(pcm16.buffer);
+                    const base64 = btoa(String.fromCharCode(...pcmData));
+
+                    let energy = 0;
+                    for (let i = 0; i < unified.length; i++) energy += Math.abs(unified[i]);
+                    const avgEnergy = energy / unified.length;
+
+                    // VAD Gating: Only send if energy is above threshold (0.002)
+                    // Lowered from 0.005 to be more sensitive to quiet speech
+                    if (avgEnergy > 0.002) {
+                        if (Math.random() < 0.05) {
+                            console.log(`Mic active: sending ${base64.length} bytes, avg energy: ${avgEnergy.toFixed(4)}`);
                         }
-                    }));
+                        wsRef.current.send(JSON.stringify({
+                            realtime_input: {
+                                media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
+                            }
+                        }));
+                    } else if (Math.random() < 0.01) {
+                        console.log(`Gating mic: avg energy ${avgEnergy.toFixed(4)} too low`);
+                    }
                 }
             };
 
@@ -450,6 +524,24 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         {entry.text}
                     </div>
                 ))}
+
+                {(currentUserText) && (
+                    <div style={{
+                        alignSelf: 'flex-end',
+                        maxWidth: '85%',
+                        padding: '12px 16px',
+                        background: 'var(--black)',
+                        opacity: 0.7,
+                        color: 'white',
+                        borderRadius: '12px',
+                        border: '1px solid var(--neutral-800)',
+                        fontSize: '15px',
+                        lineHeight: 1.5,
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                    }}>
+                        {currentUserText}
+                    </div>
+                )}
 
                 {(currentAgentText || isAgentSpeaking) && (
                     <div style={{

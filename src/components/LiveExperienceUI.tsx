@@ -35,7 +35,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const scrollRef = useRef<HTMLDivElement>(null);
     const accumulatedTextRef = useRef(''); // Agent
     const accumulatedUserTextRef = useRef(''); // Participant
-    const [currentUserText, setCurrentUserText] = useState('');
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
@@ -104,6 +103,9 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         audioQueueRef.current = [];
         isPlayingRef.current = false;
         setIsAgentSpeaking(false);
+        // Clear agent buffers after stopping
+        accumulatedTextRef.current = '';
+        setCurrentAgentText('');
     }, []);
 
     const playNextChunk = useCallback(async () => {
@@ -167,7 +169,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     generation_config: {
                         response_modalities: ["AUDIO"],
                         speech_config: {
-                            voice_config: { prebuilt_voice_config: { voice_name: "Aoede" } }
+                            voice_config: { prebuilt_voice_config: { voice_name: "Aoede" } },
+                            language_code: lang // Pin ASR language to URL param (en-US or hi-IN)
                         },
                         thinking_config: { include_thoughts: false }
                     },
@@ -268,8 +271,34 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 if (userTranscript) {
                     const userText = userTranscript.text || userTranscript.parts?.[0]?.text || "";
                     if (userText) {
-                        accumulatedUserTextRef.current += userText;
-                        setCurrentUserText(accumulatedUserTextRef.current);
+                        // Better accumulation: Only append if it's not already cumulative
+                        if (userText.length > accumulatedUserTextRef.current.length && userText.startsWith(accumulatedUserTextRef.current)) {
+                            accumulatedUserTextRef.current = userText;
+                        } else if (!accumulatedUserTextRef.current.endsWith(userText)) {
+                            accumulatedUserTextRef.current += userText;
+                        }
+
+                        const finalizedText = accumulatedUserTextRef.current.trim();
+
+                        // Stable Append Logic: Check the last bubble. 
+                        // If it's a participant, update it. If it's an agent or empty, append a new participant bubble.
+                        const updated = [...transcriptRef.current];
+                        const lastEntry = updated[updated.length - 1];
+
+                        if (lastEntry && lastEntry.role === 'participant') {
+                            updated[updated.length - 1] = { ...lastEntry, text: finalizedText };
+                        } else {
+                            const newEntry: TranscriptEntry = {
+                                role: 'participant',
+                                text: finalizedText,
+                                timestamp: new Date().toISOString(),
+                                videoTimestamp: (Date.now() - startTime) / 1000
+                            };
+                            updated.push(newEntry);
+                        }
+
+                        transcriptRef.current = updated;
+                        setTranscript(updated);
                     }
                 }
 
@@ -284,21 +313,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
 
                 const modelTurn = data.serverContent.modelTurn;
                 if (modelTurn) {
-                    // Agent started speaking, flush user buffer if it exists
-                    if (accumulatedUserTextRef.current.trim()) {
-                        const entry: TranscriptEntry = {
-                            role: 'participant',
-                            text: accumulatedUserTextRef.current,
-                            timestamp: new Date().toISOString(),
-                            videoTimestamp: (Date.now() - startTime) / 1000
-                        };
-                        const updated = [...transcriptRef.current, entry];
-                        transcriptRef.current = updated;
-                        setTranscript(updated);
-                        onMessageRef.current(entry);
-                        accumulatedUserTextRef.current = '';
-                        setCurrentUserText('');
-                    }
+                    // Turn is switching to agent, clear user accumulation buffer so next user turn starts fresh
+                    accumulatedUserTextRef.current = '';
                 }
 
                 if (modelTurn && modelTurn.parts) {
@@ -373,7 +389,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         setTranscript(updated);
                         onMessageRef.current(entry);
                         accumulatedUserTextRef.current = '';
-                        setCurrentUserText('');
                         setIsWaitingForSubmit(false);
                     }
                 }
@@ -484,10 +499,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     const avgEnergy = energy / unified.length;
 
                     // VAD Gating: Only send if energy is above threshold
-                    if (avgEnergy > 0.002) {
-                        // Only trigger ActivityStart on significant speech (0.005) to avoid cutting agent off
-                        if (!hasSentActivityStartRef.current && avgEnergy > 0.005) {
-                            console.log("Speech detected: sending ActivityStart");
+                    if (avgEnergy > 0.01) {
+                        // Only trigger ActivityStart on significant speech (0.02) to avoid cutting agent off
+                        if (!hasSentActivityStartRef.current && avgEnergy > 0.02) {
+                            console.log("Significant speech detected: sending ActivityStart");
+
                             wsRef.current.send(JSON.stringify({
                                 realtime_input: {
                                     activity_start: {}
@@ -572,24 +588,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         {entry.text}
                     </div>
                 ))}
-
-                {(currentUserText) && (
-                    <div style={{
-                        alignSelf: 'flex-end',
-                        maxWidth: '85%',
-                        padding: '12px 16px',
-                        background: 'var(--black)',
-                        opacity: 0.7,
-                        color: 'white',
-                        borderRadius: '12px',
-                        border: '1px solid var(--neutral-800)',
-                        fontSize: '15px',
-                        lineHeight: 1.5,
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
-                    }}>
-                        {currentUserText}
-                    </div>
-                )}
 
                 {(currentAgentText || isAgentSpeaking) && (
                     <div style={{

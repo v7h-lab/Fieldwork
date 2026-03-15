@@ -19,6 +19,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
     const [currentAgentText, setCurrentAgentText] = useState('');
     const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+    const [isWaitingForSubmit, setIsWaitingForSubmit] = useState(false);
+    const [isEnding, setIsEnding] = useState(false);
 
     const wsRef = useRef<WebSocket | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -37,6 +39,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
+    const hasSentActivityStartRef = useRef(false);
 
     // Get language from URL or default to en-US
     const lang = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('lang') || 'en-US' : 'en-US';
@@ -101,6 +104,9 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         audioQueueRef.current = [];
         isPlayingRef.current = false;
         setIsAgentSpeaking(false);
+        // Aggressive state flush on stop/interrupt
+        accumulatedTextRef.current = '';
+        setCurrentAgentText('');
     }, []);
 
     const playNextChunk = useCallback(async () => {
@@ -170,6 +176,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     },
                     input_audio_transcription: {},
                     output_audio_transcription: {}, // Enable transcription of model output
+                    realtime_input_config: {
+                        automatic_activity_detection: {
+                            disabled: true
+                        }
+                    },
                     system_instruction: { role: "system", parts: [{ text: systemInstructionsRef.current }] }
                 }
             };
@@ -245,6 +256,10 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     accumulatedUserTextRef.current = '';
                     setCurrentUserText('');
                 }
+
+                // Reset manual VAD states on interruption
+                hasSentActivityStartRef.current = false;
+                setIsWaitingForSubmit(false);
                 return;
             }
 
@@ -331,7 +346,15 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                             (lowerText.includes("thank you") && lowerText.includes("concludes"));
 
                         if (hasEndKeywords) {
-                            console.log("Session conclusion detected via keywords, finishing in 3s...");
+                            console.log("Session conclusion detected via keywords, killing resources...");
+                            setIsEnding(true);
+                            // Immediate resource teardown
+                            sourceRef.current?.disconnect();
+                            workletNodeRef.current?.disconnect();
+                            if (audioContextRef.current?.state !== 'closed') {
+                                audioContextRef.current?.close();
+                            }
+                            // UI Delay for "Thank You" logic
                             setTimeout(() => onCompleteRef.current(updated), 3000);
                         }
                     }
@@ -352,6 +375,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         onMessageRef.current(entry);
                         accumulatedUserTextRef.current = '';
                         setCurrentUserText('');
+                        setIsWaitingForSubmit(false);
                     }
                 }
             }
@@ -372,6 +396,19 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
 
         return ws;
     }, [startTime, playNextChunk, stopPlayback]); // Removed systemInstructions to break loop
+
+    const submitResponse = useCallback(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN && hasSentActivityStartRef.current) {
+            console.log("Submitting response via ActivityEnd");
+            wsRef.current.send(JSON.stringify({
+                realtime_input: {
+                    activity_end: true
+                }
+            }));
+            hasSentActivityStartRef.current = false;
+            setIsWaitingForSubmit(false);
+        }
+    }, []);
 
     const startMic = useCallback(async () => {
         try {
@@ -421,25 +458,59 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     setShowMuteReminder(false);
                 }
 
-                // Send audio chunks to Gemini
-                // We no longer use gating or thresholds to ensure maximum recognition
-                const pcm16 = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+                // Buffer audio to send larger chunks (lower WebSocket frequency)
+                audioBufferRef.current.push(new Float32Array(inputData));
+                if (audioBufferRef.current.length < 5) return; // Snappy QoS: Reduced from 10 to 5 (~40ms)
+
+                const totalLength = audioBufferRef.current.reduce((acc, val) => acc + val.length, 0);
+                const unified = new Float32Array(totalLength);
+                let offset = 0;
+                for (const chunk of audioBufferRef.current) {
+                    unified.set(chunk, offset);
+                    offset += chunk.length;
+                }
+                audioBufferRef.current = [];
+
+                const pcm16 = new Int16Array(unified.length);
+                for (let i = 0; i < unified.length; i++) {
+                    pcm16[i] = Math.max(-1, Math.min(1, unified[i])) * 0x7FFF;
                 }
 
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
                     const pcmData = new Uint8Array(pcm16.buffer);
                     const base64 = btoa(String.fromCharCode(...pcmData));
 
-                    wsRef.current.send(JSON.stringify({
-                        realtime_input: {
-                            media_chunks: [{ data: base64, mime_type: "audio/pcm;rate=16000" }]
+                    let energy = 0;
+                    for (let i = 0; i < unified.length; i++) energy += Math.abs(unified[i]);
+                    const avgEnergy = energy / unified.length;
+
+                    // VAD Gating: Only send if energy is above threshold (0.002)
+                    // Lowered from 0.005 to be more sensitive to quiet speech
+                    if (avgEnergy > 0.002) {
+                        if (!hasSentActivityStartRef.current) {
+                            console.log("Speech detected: sending ActivityStart");
+                            wsRef.current.send(JSON.stringify({
+                                realtime_input: {
+                                    activity_start: true
+                                }
+                            }));
+                            hasSentActivityStartRef.current = true;
+                            setIsWaitingForSubmit(true);
                         }
-                    }));
+
+                        if (Math.random() < 0.05) {
+                            console.log(`Mic active: sending ${base64.length} bytes, avg energy: ${avgEnergy.toFixed(4)}`);
+                        }
+                        wsRef.current.send(JSON.stringify({
+                            realtime_input: {
+                                media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
+                            }
+                        }));
+                    } else if (Math.random() < 0.01) {
+                        console.log(`Gating mic: avg energy ${avgEnergy.toFixed(4)} too low`);
+                    }
                 }
             };
-
 
             source.connect(workletNode);
             workletNode.connect(audioContextRef.current.destination);
@@ -449,6 +520,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     }, []);
 
     useEffect(() => {
+        if (isEnding) return;
         const ws = connect();
         startMic();
         return () => {
@@ -459,7 +531,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 audioContextRef.current?.close();
             }
         };
-    }, [connect, startMic]);
+    }, [connect, startMic, isEnding]);
 
     return (
         <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px', height: '100%', background: 'var(--bg-page)' }}>
@@ -574,10 +646,32 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         border: 'none', cursor: 'pointer', transition: 'all 0.2s',
                         boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
                     }}
-                    title={isMuted ? "Unmute" : "Mute"}
                 >
                     {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
                 </button>
+
+                {isWaitingForSubmit && !isMuted && (
+                    <button
+                        onClick={submitResponse}
+                        style={{
+                            padding: '12px 24px',
+                            background: '#22c55e',
+                            color: 'white',
+                            borderRadius: '24px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            animation: 'fadeInUp 0.3s ease-out',
+                            boxShadow: '0 4px 12px rgba(34,197,94,0.2)'
+                        }}
+                    >
+                        Submit Response
+                    </button>
+                )}
             </div>
 
             <style jsx>{`

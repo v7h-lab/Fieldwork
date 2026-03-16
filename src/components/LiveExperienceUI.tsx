@@ -9,10 +9,11 @@ interface LiveExperienceUIProps {
     participantName: string;
     onMessage: (entry: TranscriptEntry) => void;
     onComplete: (transcript: TranscriptEntry[]) => void;
+    onStatsUpdate?: (stats: { questionCount: number; durationSeconds: number }) => void;
     startTime: number;
 }
 
-export function LiveExperienceUI({ study, participantName, onMessage, onComplete, startTime }: LiveExperienceUIProps) {
+export function LiveExperienceUI({ study, participantName, onMessage, onComplete, onStatsUpdate, startTime }: LiveExperienceUIProps) {
     const [isMuted, setIsMuted] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
     const [showMuteReminder, setShowMuteReminder] = useState(false);
@@ -20,6 +21,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const [currentAgentText, setCurrentAgentText] = useState('');
     const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
     const [isEnding, setIsEnding] = useState(false);
+    const [stats, setStats] = useState({ questionCount: 0, durationSeconds: 0 });
+    const [activeOptions, setActiveOptions] = useState<string[]>([]);
 
     const wsRef = useRef<WebSocket | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -34,6 +37,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const scrollRef = useRef<HTMLDivElement>(null);
     const accumulatedTextRef = useRef(''); // Agent
     const accumulatedUserTextRef = useRef(''); // Participant
+    const totalCommittedUserTextRef = useRef(''); // Tracks all text already committed to bubbles
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
@@ -93,6 +97,26 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         scrollToBottom();
     }, [transcript, currentAgentText, scrollToBottom]);
 
+    // Duration Timer
+    useEffect(() => {
+        if (isEnding || !isConnected) return;
+        const interval = setInterval(() => {
+            setStats(prev => {
+                const next = { ...prev, durationSeconds: Math.floor((Date.now() - startTime) / 1000) };
+                onStatsUpdate?.(next);
+                return next;
+            });
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [startTime, isEnding, isConnected, onStatsUpdate]);
+
+    const getAudioContext = useCallback(() => {
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        return audioContextRef.current;
+    }, []);
+
     const stopPlayback = useCallback(() => {
         if (currentSourceRef.current) {
             try {
@@ -108,10 +132,65 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         setCurrentAgentText('');
     }, []);
 
+    const flushParticipantText = useCallback(() => {
+        const textToCommit = accumulatedUserTextRef.current.trim();
+        if (textToCommit) {
+            const entry: TranscriptEntry = {
+                role: 'participant',
+                text: textToCommit,
+                timestamp: new Date().toISOString(),
+                videoTimestamp: (Date.now() - startTime) / 1000
+            };
+            const currentTranscript = transcriptRef.current;
+            
+            // Filter out existing participant entries to avoid duplication
+            let updated = currentTranscript.filter(e => e.role !== 'participant' || !textToCommit.includes(e.text));
+            updated.push(entry);
+
+            transcriptRef.current = updated;
+            setTranscript(updated);
+            onMessageRef.current(entry);
+            totalCommittedUserTextRef.current = totalCommittedUserTextRef.current 
+                ? totalCommittedUserTextRef.current + " " + textToCommit 
+                : textToCommit;
+            accumulatedUserTextRef.current = '';
+        }
+    }, [startTime]);
+
+    const handleOptionClick = useCallback((option: string) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            // Send as a turn so the AI knows which option was picked
+            wsRef.current.send(JSON.stringify({
+                client_content: {
+                    turns: [{
+                        role: "user",
+                        parts: [{ text: `Selected option: ${option}` }]
+                    }],
+                    turn_complete: true
+                }
+            }));
+            setActiveOptions([]); // Clear choices after selection
+            
+            // Log it in transcript
+            const entry: TranscriptEntry = {
+                role: 'participant',
+                text: `[Selected]: ${option}`,
+                timestamp: new Date().toISOString(),
+                videoTimestamp: (Date.now() - startTime) / 1000
+            };
+            const updated = [...transcriptRef.current, entry];
+            transcriptRef.current = updated;
+            setTranscript(updated);
+            onMessageRef.current(entry);
+        }
+    }, [startTime]);
+
     const playNextChunk = useCallback(async () => {
-        if (audioQueueRef.current.length === 0) {
-            isPlayingRef.current = false;
-            setIsAgentSpeaking(false);
+        if (audioQueueRef.current.length === 0 || isPlayingRef.current) {
+            if (audioQueueRef.current.length === 0) {
+                isPlayingRef.current = false;
+                setIsAgentSpeaking(false);
+            }
             return;
         }
 
@@ -119,12 +198,9 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         setIsAgentSpeaking(true);
         const pcm16 = audioQueueRef.current.shift()!;
 
-        if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        }
-
-        if (audioContextRef.current.state === 'suspended') {
-            await audioContextRef.current.resume();
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') {
+            await ctx.resume();
         }
 
         const float32 = new Float32Array(pcm16.length);
@@ -132,15 +208,17 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             float32[i] = pcm16[i] / 32768.0;
         }
 
-        const buffer = audioContextRef.current.createBuffer(1, float32.length, 24000);
+        const buffer = ctx.createBuffer(1, float32.length, 24000); // Gemini output is 24kHz
         buffer.getChannelData(0).set(float32);
 
-        const source = audioContextRef.current.createBufferSource();
+        const source = ctx.createBufferSource();
         source.buffer = buffer;
-        source.connect(audioContextRef.current.destination);
+        source.connect(ctx.destination);
+;
         currentSourceRef.current = source;
         source.onended = () => {
             if (currentSourceRef.current === source) {
+                isPlayingRef.current = false;
                 playNextChunk();
             }
         };
@@ -195,6 +273,23 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                             disabled: false
                         }
                     },
+                    tools: [{
+                        function_declarations: [{
+                            name: "show_options",
+                            description: "Show interactive multiple-choice options to the participant.",
+                            parameters: {
+                                type: "OBJECT",
+                                properties: {
+                                    options: {
+                                        type: "ARRAY",
+                                        items: { type: "STRING" },
+                                        description: "The list of strings to show as clickable options."
+                                    }
+                                },
+                                required: ["options"]
+                            }
+                        }]
+                    }],
                     system_instruction: { 
                         role: "system", 
                         parts: [{ text: systemInstructionsRef.current }] 
@@ -298,29 +393,50 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     if (userText) {
                         // Merger logic: if newText starts with old text, it's an extension
                         const current = accumulatedUserTextRef.current;
-                        if (userText.length > current.length && userText.toLowerCase().startsWith(current.toLowerCase())) {
-                            accumulatedUserTextRef.current = userText;
-                        } else if (current.toLowerCase().includes(userText.toLowerCase())) {
+                        const totalCommitted = totalCommittedUserTextRef.current;
+                        
+                        // Strip total committed history from the live incoming text to avoid "echoing" bubbles
+                        let cleanText = userText;
+                        if (totalCommitted && userText.toLowerCase().startsWith(totalCommitted.toLowerCase())) {
+                            cleanText = userText.substring(totalCommitted.length).trim();
+                        } else if (totalCommitted) {
+                            // If it doesn't start exactly (e.g. minor punctuation change in history),
+                            // try to find where the history ends.
+                            // This is a safety fallback.
+                            const words = totalCommitted.toLowerCase().split(/\s+/);
+                            const lastWord = words[words.length - 1];
+                            const lastWordIdx = userText.toLowerCase().lastIndexOf(lastWord);
+                            if (lastWordIdx !== -1) {
+                                cleanText = userText.substring(lastWordIdx + lastWord.length).trim();
+                            }
+                        }
+
+                        if (cleanText.length > current.length && cleanText.toLowerCase().startsWith(current.toLowerCase())) {
+                            accumulatedUserTextRef.current = cleanText;
+                        } else if (current.toLowerCase().includes(cleanText.toLowerCase())) {
                             // Already have it
                         } else {
-                            // New chunk
-                            accumulatedUserTextRef.current = current ? current + " " + userText : userText;
+                            // New chunk or update
+                            accumulatedUserTextRef.current = cleanText;
                         }
 
                         // UI Update: Optimistically show the current state
-                        const updated = [...transcriptRef.current];
-                        const lastEntry = updated[updated.length - 1];
-                        if (lastEntry && lastEntry.role === 'participant') {
-                            updated[updated.length - 1] = { ...lastEntry, text: accumulatedUserTextRef.current };
-                        } else {
-                            updated.push({
-                                role: 'participant',
-                                text: accumulatedUserTextRef.current,
-                                timestamp: new Date().toISOString(),
-                                videoTimestamp: (Date.now() - startTime) / 1000
-                            });
+                        if (accumulatedUserTextRef.current.trim()) {
+                            const updated = [...transcriptRef.current];
+                            const lastEntry = updated[updated.length - 1];
+                            if (lastEntry && lastEntry.role === 'participant') {
+                                updated[updated.length - 1] = { ...lastEntry, text: accumulatedUserTextRef.current };
+                            } else {
+                                updated.push({
+                                    role: 'participant',
+                                    text: accumulatedUserTextRef.current,
+                                    timestamp: new Date().toISOString(),
+                                    videoTimestamp: (Date.now() - startTime) / 1000
+                                });
+                            }
+                            transcriptRef.current = updated;
+                            setTranscript(updated);
                         }
-                        setTranscript(updated);
                     }
                 }
 
@@ -337,32 +453,10 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 if (data.serverContent.modelTurn) {
                     const modelTurn = data.serverContent.modelTurn;
                     setIsAgentSpeaking(true);
-                    stopPlayback(); // Interrupt on new turn
                     
-                    // Flush Participant Text immediately when agent starts talking to ensure it's saved
-                    if (accumulatedUserTextRef.current.trim()) {
-                        const entry: TranscriptEntry = {
-                            role: 'participant',
-                            text: accumulatedUserTextRef.current.trim(),
-                            timestamp: new Date().toISOString(),
-                            videoTimestamp: (Date.now() - startTime) / 1000
-                        };
-                        // Sync Ref
-                        const currentTranscript = transcriptRef.current;
-                        const lastIsParticipant = currentTranscript[currentTranscript.length - 1]?.role === 'participant';
-                        
-                        let updated;
-                        if (lastIsParticipant) {
-                            updated = [...currentTranscript];
-                            updated[updated.length - 1] = entry;
-                        } else {
-                            updated = [...currentTranscript, entry];
-                        }
-                        
-                        transcriptRef.current = updated;
-                        setTranscript(updated);
-                        onMessageRef.current(entry);
-                        accumulatedUserTextRef.current = '';
+                    // Flush Participant Text only if this is likely the start of a response
+                    if (accumulatedTextRef.current === '') {
+                        flushParticipantText();
                     }
 
                     for (const part of modelTurn.parts) {
@@ -375,21 +469,20 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                             }
                             const pcm16 = new Int16Array(bytes.buffer);
                             audioQueueRef.current.push(pcm16);
-                            if (!isPlayingRef.current) playNextChunk();
                         }
-                        if (part.text && !part.thought) {
-                            accumulatedTextRef.current += part.text;
-                            setCurrentAgentText(accumulatedTextRef.current);
-                        }
+                        // Note: We ignore part.text here because we rely on outputTranscription 
+                        // for smooth, non-redundant live text streaming.
                     }
+                    if (!isPlayingRef.current) playNextChunk();
                 }
 
                 if (data.serverContent.turnComplete) {
                     // Flush Agent Text to official transcript
-                    if (accumulatedTextRef.current.trim()) {
+                    const finalAgentText = accumulatedTextRef.current.trim();
+                    if (finalAgentText) {
                         const entry: TranscriptEntry = {
                             role: 'agent',
-                            text: accumulatedTextRef.current.trim(),
+                            text: finalAgentText,
                             timestamp: new Date().toISOString(),
                             videoTimestamp: (Date.now() - startTime) / 1000
                         };
@@ -397,9 +490,43 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         transcriptRef.current = updated;
                         setTranscript(updated);
                         onMessageRef.current(entry);
+                        
+                        // Increment question count
+                        setStats(prev => {
+                            const next = { ...prev, questionCount: prev.questionCount + 1 };
+                            onStatsUpdate?.(next);
+                            return next;
+                        });
+
+                        // Check for final completion keyword
+                        if (finalAgentText.toLowerCase().includes("concludes our interview")) {
+                            setIsEnding(true);
+                            setTimeout(() => {
+                                onComplete(transcriptRef.current);
+                            }, 1500); // Small grace period for audio to finish
+                        }
                     }
                     accumulatedTextRef.current = '';
                     setCurrentAgentText('');
+                }
+
+                // Handle Tool Calls (Choices)
+                if (data.toolCall) {
+                    const call = data.toolCall.functionCalls?.find((fc: any) => fc.name === 'show_options');
+                    if (call?.args?.options) {
+                        setActiveOptions(call.args.options);
+                        
+                        // Acknowledge tool call immediately
+                        ws.send(JSON.stringify({
+                            tool_response: {
+                                function_responses: [{
+                                    name: "show_options",
+                                    response: { success: true },
+                                    id: call.id
+                                }]
+                            }
+                        }));
+                    }
                 }
             }
         };
@@ -423,15 +550,12 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const startMic = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const ctx = getAudioContext();
             
-            if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            }
-
             // Ensure AudioWorklet is loaded
             try {
                 // Next.js static file path
-                await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
+                await ctx.audioWorklet.addModule('/audio-processor.js');
             } catch (e) {
                 // If it fails because it's already added, we can continue
                 console.log('AudioWorklet module adding status:', e);
@@ -442,20 +566,20 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             
             let workletNode;
             try {
-                workletNode = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+                workletNode = new AudioWorkletNode(ctx, 'audio-processor');
             } catch (e) {
                 console.error('Failed to create AudioWorkletNode, retrying after delay...', e);
                 // Simple retry mechanism
                 await new Promise(resolve => setTimeout(resolve, 100));
-                workletNode = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+                workletNode = new AudioWorkletNode(ctx, 'audio-processor');
             }
             
             workletNodeRef.current = workletNode;
 
-            const source = audioContextRef.current.createMediaStreamSource(stream);
+            const source = ctx.createMediaStreamSource(stream);
             sourceRef.current = source;
 
-            const analyser = audioContextRef.current.createAnalyser();
+            const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             speechDetectorRef.current = analyser;
             source.connect(analyser);
@@ -492,9 +616,18 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 }
                 audioBufferRef.current = [];
 
-                const pcm16 = new Int16Array(unified.length);
-                for (let i = 0; i < unified.length; i++) {
-                    pcm16[i] = Math.max(-1, Math.min(1, unified[i])) * 0x7FFF;
+                // Resample to 16kHz for Gemini input
+                const sampleRate = ctx.sampleRate;
+                const targetRate = 16000;
+                const resampledLength = Math.round(unified.length * targetRate / sampleRate);
+                const resampled = new Float32Array(resampledLength);
+                for (let i = 0; i < resampledLength; i++) {
+                    resampled[i] = unified[Math.floor(i * sampleRate / targetRate)];
+                }
+
+                const pcm16 = new Int16Array(resampled.length);
+                for (let i = 0; i < resampled.length; i++) {
+                    pcm16[i] = Math.max(-1, Math.min(1, resampled[i])) * 0x7FFF;
                 }
 
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -511,11 +644,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             };
 
             source.connect(workletNode);
-            workletNode.connect(audioContextRef.current.destination);
+            workletNode.connect(ctx.destination);
         } catch (err) {
             console.error('Mic Access Denied:', err);
         }
-    }, []);
+    }, [getAudioContext]);
 
     useEffect(() => {
         if (isEnding) return;
@@ -601,6 +734,45 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     </div>
                 )}
             </div>
+
+            {/* Multimodal Choice Overlay */}
+            {activeOptions.length > 0 && (
+                <div style={{
+                    padding: '16px',
+                    margin: '0 24px',
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--neutral-100)',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    animation: 'fadeInUp 0.3s ease-out',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                }}>
+                    <div style={{ fontSize: '12px', color: 'var(--neutral-500)', fontWeight: 500 }}>Select an option:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {activeOptions.map((opt, i) => (
+                            <button
+                                key={i}
+                                onClick={() => handleOptionClick(opt)}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '20px',
+                                    background: 'var(--bg-page)',
+                                    border: '1px solid var(--neutral-200)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: '14px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    fontWeight: 500
+                                }}
+                            >
+                                {opt}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Mute Reminder */}
             {showMuteReminder && (

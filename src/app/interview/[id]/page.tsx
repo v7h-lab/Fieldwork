@@ -400,6 +400,7 @@ function InterviewPageContent() {
             completedAt: new Date().toISOString(),
             transcript,
             screenedOut: false,
+            videoDuration: Math.round((Date.now() - interviewStartTime) / 1000),
         };
 
         // Stop recording and handle video upload
@@ -742,6 +743,9 @@ function InterviewPageContent() {
                             participantName={participantName}
                             onMessage={(entry) => setMessages(prev => [...prev, entry])}
                             onComplete={(finalTranscript) => completeInterview(finalTranscript)}
+                            onStatsUpdate={(stats) => {
+                                setQuestionCount(stats.questionCount);
+                            }}
                             startTime={interviewStartTime}
                         />
                     </div>

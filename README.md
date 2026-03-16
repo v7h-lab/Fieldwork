@@ -61,6 +61,25 @@ graph LR
     class Data data;
 ```
 
+## Testing the Experience
+
+### 1. Create a Research Study
+- **Launch the App**: Open Fieldwork in your browser.
+- **Select Research Type**: Choose a category (e.g., "Usability Testing" or "Discovery Interview") from the home grid.
+- **Define Study**: Fill in the study name, research goals, and target audience. 
+- **Collaborate with Gemini**: Click **"Create Study"**. Gemini will instantly collaborate with you to generate a tailored interview guide based on your inputs.
+- **Review Guide**: Switch to the **"Guide"** tab to see the AI-generated questions and logic.
+
+### 2. Test the Participant Interview
+- **Get the Link**: In the **"Setup"** tab, locate the **"Interview Link"**.
+- **Join as Participant**: Open the link in a new browser tab or window.
+- **Conduct Interview**: 
+  - Ensure your microphone is enabled.
+  - Speak naturally with the Gemini-powered research agent.
+  - Watch as the **real-time transcript** updates and the agent handles following-up and probing questions.
+  - **Auto-Termination**: The interview will conclude automatically when the agent says "concludes our interview."
+- **View Results**: Return to the researcher view in the original tab. Go to the **"Responses"** tab to see your transcript and session recording instantly available for analysis.
+
 ## Setup & Deployment
 
 1. **Install Dependencies**:

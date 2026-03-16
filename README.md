@@ -61,6 +61,26 @@ graph LR
     class Data data;
 ```
 
+## Hackathon Requirements
+
+### 1. Leverage a Gemini Model
+Fieldwork is powered by the **Gemini 2.5** family of models:
+- **Real-time Moderation**: Uses `gemini-live-2.5-flash-native-audio` for low-latency, bi-directional voice interactions.
+- **Synthesis & Analysis**: Uses `gemini-2.5-flash` for generating tailored research guides and synthesizing session insights.
+
+### 2. Built using Google GenAI SDK
+The agent infrastructure is built using the **Google Cloud Vertex AI Node.js SDK** (`@google-cloud/vertexai`). We utilize:
+- **Multimodal Live API (WebSockets)**: For real-time, bi-directional agent interactions.
+- **Tools / Function Calling**: For interactive multimodal UI elements (e.g., multiple-choice questions).
+- **Stream Generation**: For real-time text synthesis and guide generation.
+
+### 3. Use Google Cloud Services
+Fieldwork is a cloud-native application deeply integrated with the **Google Cloud Platform (GCP)**:
+- **Vertex AI**: Hosting all Gemini 2.5 models and managing the real-time agent infrastructure.
+- **Cloud Run**: Containerized deployment of the Next.js application, utilizing service-to-service authentication (ADC).
+- **Cloud Storage (GCS)**: Secure persistence of interview recordings and transcribed data via signed URLs.
+- **IAM / Service Accounts**: Secure, ambient authentication across all services without hardcoded keys.
+
 ## Testing the Experience
 
 ### 1. Create a Research Study

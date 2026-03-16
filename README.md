@@ -30,7 +30,7 @@ graph LR
     subgraph AI ["AI Layer (Vertex AI)"]
         LiveAPI["Multimodal Live (WS)"]
         GeminiLive["Gemini 2.5 Flash"]
-        Flash15["Analysis (Gemini 1.5)"]
+        Flash25["Analysis (Gemini 2.5)"]
     end
 
     subgraph Data ["Data Layer"]
@@ -47,7 +47,7 @@ graph LR
     User -- Recording --> Storage
     Storage --> GCS
     
-    NextJS <--> Flash15
+    NextJS <--> Flash25
 
     %% Styling
     classDef client fill:#f9f9f9,stroke:#333;

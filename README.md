@@ -81,6 +81,11 @@ Fieldwork is a cloud-native application deeply integrated with the **Google Clou
 - **Cloud Storage (GCS)**: Secure persistence of interview recordings and transcribed data via signed URLs.
 - **IAM / Service Accounts**: Secure, ambient authentication across all services without hardcoded keys.
 
+### 4. Deployment Automation (Bonus)
+Fieldwork features fully automated deployment using **Google Cloud Build** and **Docker**:
+- **Infrastructure-as-Code**: The [cloudbuild.yaml](file:///Users/Metal/Desktop/Feildwork/Fieldwork/cloudbuild.yaml) file defines the entire CI/CD pipeline, from building the production-ready container to deploying it to Cloud Run.
+- **Containerization**: The multi-stage [Dockerfile](file:///Users/Metal/Desktop/Feildwork/Fieldwork/Dockerfile) ensures a consistent, optimized footprint for the application in the cloud.
+
 ## Testing the Experience
 
 ### 1. Create a Research Study

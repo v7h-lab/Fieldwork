@@ -50,10 +50,10 @@ graph LR
     NextJS <--> Flash25
 
     %% Styling
-    classDef client fill:#f9f9f9,stroke:#333;
-    classDef app fill:#e1f5fe,stroke:#01579b;
-    classDef ai fill:#e8f5e9,stroke:#2e7d32;
-    classDef data fill:#fff3e0,stroke:#e65100;
+    classDef client fill:#f5f5f5,stroke:#333,color:#333;
+    classDef app fill:#e1f5fe,stroke:#01579b,color:#01579b;
+    classDef ai fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32;
+    classDef data fill:#fff3e0,stroke:#e65100,color:#e65100;
     
     class Client client;
     class App app;

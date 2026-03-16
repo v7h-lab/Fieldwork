@@ -19,7 +19,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
     const [currentAgentText, setCurrentAgentText] = useState('');
     const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
-    const [isWaitingForSubmit, setIsWaitingForSubmit] = useState(false);
     const [isEnding, setIsEnding] = useState(false);
 
     const wsRef = useRef<WebSocket | null>(null);
@@ -38,7 +37,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const isMutedRef = useRef(isMuted);
     const audioBufferRef = useRef<Float32Array[]>([]);
     const systemInstructionsRef = useRef('');
-    const hasSentActivityStartRef = useRef(false);
 
     // Get language from URL or default to en-US
     const lang = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('lang') || 'en-US' : 'en-US';
@@ -67,6 +65,8 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         8. IMPORTANT: You must NOT speak your internal thinking, planning, or preparation process aloud. Any text like "Initiating the interview process" or "I've ready to begin" must be internal only. ONLY speak direct dialogue intended for the participant.
         9. Start immediately with the first question or introduction without any metadata or labels.
         10. LANGUAGE MANDATE: The participant has selected ${lang} as their preferred language. Even if you hear noise or words that sound like other languages, you MUST interpret them in the context of ${lang} and you MUST ONLY respond and transcribe in English (en-US). Do NOT use any non-English characters or scripts.
+        11. PROACTIVE TURN-TAKING: If you hear the participant stop speaking, or if there is a silence longer than 2 seconds, be proactive and respond. If you are unsure if they finished, you can ask "Would you like to elaborate on that?" or similar nudges. Do NOT stay in long silences.
+        12. BE VERBAL: As this is a voice-only interface, use verbal cues to show you are listening (e.g., "I see", "Interesting"). Keep the flow moving.
     `, [study, participantName, lang]);
 
     // Stability: Wrap onMessage and onComplete in refs so connect doesn't restart when they (rarely) change
@@ -183,7 +183,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 setup: {
                     model: `projects/${project}/locations/${location}/publishers/google/models/${model}`,
                     generation_config: {
-                        response_modalities: ["AUDIO", "TEXT"],
+                        response_modalities: ["AUDIO"],
                         speech_config: {
                             voice_config: { prebuilt_voice_config: { voice_name: "Puck" } }
                         }
@@ -286,10 +286,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 // Clear agent buffers after committing
                 accumulatedTextRef.current = '';
                 setCurrentAgentText('');
-
-                // Reset manual VAD states on interruption
-                hasSentActivityStartRef.current = false;
-                setIsWaitingForSubmit(false);
                 return;
             }
 
@@ -298,35 +294,32 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 const userTranscript = data.serverContent.userTranscription || data.serverContent.inputTranscription;
                 if (userTranscript) {
                     let userText = userTranscript.text || userTranscript.parts?.[0]?.text || "";
-                    userText = filterTextByLanguage(userText); // Harden language adherence
+                    userText = filterTextByLanguage(userText);
                     if (userText) {
-                        // Better accumulation: Only append if it's not already cumulative
-                        if (userText.length > accumulatedUserTextRef.current.length && userText.startsWith(accumulatedUserTextRef.current)) {
+                        // Merger logic: if newText starts with old text, it's an extension
+                        const current = accumulatedUserTextRef.current;
+                        if (userText.length > current.length && userText.toLowerCase().startsWith(current.toLowerCase())) {
                             accumulatedUserTextRef.current = userText;
-                        } else if (!accumulatedUserTextRef.current.endsWith(userText)) {
-                            accumulatedUserTextRef.current += userText;
+                        } else if (current.toLowerCase().includes(userText.toLowerCase())) {
+                            // Already have it
+                        } else {
+                            // New chunk
+                            accumulatedUserTextRef.current = current ? current + " " + userText : userText;
                         }
 
-                        const finalizedText = accumulatedUserTextRef.current.trim();
-
-                        // Stable Append Logic: Check the last bubble. 
-                        // If it's a participant, update it. If it's an agent or empty, append a new participant bubble.
+                        // UI Update: Optimistically show the current state
                         const updated = [...transcriptRef.current];
                         const lastEntry = updated[updated.length - 1];
-
                         if (lastEntry && lastEntry.role === 'participant') {
-                            updated[updated.length - 1] = { ...lastEntry, text: finalizedText };
+                            updated[updated.length - 1] = { ...lastEntry, text: accumulatedUserTextRef.current };
                         } else {
-                            const newEntry: TranscriptEntry = {
+                            updated.push({
                                 role: 'participant',
-                                text: finalizedText,
+                                text: accumulatedUserTextRef.current,
                                 timestamp: new Date().toISOString(),
                                 videoTimestamp: (Date.now() - startTime) / 1000
-                            };
-                            updated.push(newEntry);
+                            });
                         }
-
-                        transcriptRef.current = updated;
                         setTranscript(updated);
                     }
                 }
@@ -334,20 +327,44 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 // Handle Agent Transcription (Streaming parts)
                 if (data.serverContent.outputTranscription) {
                     let agentText = data.serverContent.outputTranscription.text || "";
-                    agentText = filterTextByLanguage(agentText); // Harden language adherence
+                    agentText = filterTextByLanguage(agentText);
                     if (agentText) {
                         accumulatedTextRef.current += agentText;
                         setCurrentAgentText(accumulatedTextRef.current);
                     }
                 }
 
-                const modelTurn = data.serverContent.modelTurn;
-                if (modelTurn) {
-                    // Turn is switching to agent, clear user accumulation buffer so next user turn starts fresh
-                    accumulatedUserTextRef.current = '';
-                }
+                if (data.serverContent.modelTurn) {
+                    const modelTurn = data.serverContent.modelTurn;
+                    setIsAgentSpeaking(true);
+                    stopPlayback(); // Interrupt on new turn
+                    
+                    // Flush Participant Text immediately when agent starts talking to ensure it's saved
+                    if (accumulatedUserTextRef.current.trim()) {
+                        const entry: TranscriptEntry = {
+                            role: 'participant',
+                            text: accumulatedUserTextRef.current.trim(),
+                            timestamp: new Date().toISOString(),
+                            videoTimestamp: (Date.now() - startTime) / 1000
+                        };
+                        // Sync Ref
+                        const currentTranscript = transcriptRef.current;
+                        const lastIsParticipant = currentTranscript[currentTranscript.length - 1]?.role === 'participant';
+                        
+                        let updated;
+                        if (lastIsParticipant) {
+                            updated = [...currentTranscript];
+                            updated[updated.length - 1] = entry;
+                        } else {
+                            updated = [...currentTranscript, entry];
+                        }
+                        
+                        transcriptRef.current = updated;
+                        setTranscript(updated);
+                        onMessageRef.current(entry);
+                        accumulatedUserTextRef.current = '';
+                    }
 
-                if (modelTurn && modelTurn.parts) {
                     for (const part of modelTurn.parts) {
                         if (part.inlineData) {
                             const audioBase64 = part.inlineData.data;
@@ -360,7 +377,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                             audioQueueRef.current.push(pcm16);
                             if (!isPlayingRef.current) playNextChunk();
                         }
-                        // Use text part if available (transcription of output)
                         if (part.text && !part.thought) {
                             accumulatedTextRef.current += part.text;
                             setCurrentAgentText(accumulatedTextRef.current);
@@ -369,12 +385,11 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 }
 
                 if (data.serverContent.turnComplete) {
-                    // Flush Agent Text
-                    const text = accumulatedTextRef.current;
-                    if (text.trim()) {
+                    // Flush Agent Text to official transcript
+                    if (accumulatedTextRef.current.trim()) {
                         const entry: TranscriptEntry = {
                             role: 'agent',
-                            text: text,
+                            text: accumulatedTextRef.current.trim(),
                             timestamp: new Date().toISOString(),
                             videoTimestamp: (Date.now() - startTime) / 1000
                         };
@@ -382,45 +397,9 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                         transcriptRef.current = updated;
                         setTranscript(updated);
                         onMessageRef.current(entry);
-
-                        // Reliable termination check: strictly keyword based
-                        const lowerText = text.toLowerCase();
-                        const hasEndKeywords = lowerText.includes("thank you for your time") ||
-                            lowerText.includes("concludes our interview") ||
-                            lowerText.includes("concludes our study") ||
-                            (lowerText.includes("thank you") && lowerText.includes("concludes"));
-
-                        if (hasEndKeywords) {
-                            console.log("Session conclusion detected via keywords, killing resources...");
-                            setIsEnding(true);
-                            // Immediate resource teardown
-                            sourceRef.current?.disconnect();
-                            workletNodeRef.current?.disconnect();
-                            if (audioContextRef.current?.state !== 'closed') {
-                                audioContextRef.current?.close();
-                            }
-                            // UI Delay for "Thank You" logic
-                            setTimeout(() => onCompleteRef.current(updated), 3000);
-                        }
                     }
                     accumulatedTextRef.current = '';
                     setCurrentAgentText('');
-
-                    // Flush User Text (if terminal hasn't already)
-                    if (accumulatedUserTextRef.current.trim()) {
-                        const entry: TranscriptEntry = {
-                            role: 'participant',
-                            text: accumulatedUserTextRef.current,
-                            timestamp: new Date().toISOString(),
-                            videoTimestamp: (Date.now() - startTime) / 1000
-                        };
-                        const updated = [...transcriptRef.current, entry];
-                        transcriptRef.current = updated;
-                        setTranscript(updated);
-                        onMessageRef.current(entry);
-                        accumulatedUserTextRef.current = '';
-                        setIsWaitingForSubmit(false);
-                    }
                 }
             }
         };
@@ -440,19 +419,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
 
         return ws;
     }, [startTime, playNextChunk, stopPlayback]); // Removed systemInstructions to break loop
-
-    const submitResponse = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN && hasSentActivityStartRef.current) {
-            console.log("Submitting response via ActivityEnd");
-            wsRef.current.send(JSON.stringify({
-                realtime_input: {
-                    activity_end: {}
-                }
-            }));
-            hasSentActivityStartRef.current = false;
-            setIsWaitingForSubmit(false);
-        }
-    }, []);
 
     const startMic = useCallback(async () => {
         try {
@@ -535,36 +501,12 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                     const pcmData = new Uint8Array(pcm16.buffer);
                     const base64 = btoa(String.fromCharCode(...pcmData));
 
-                    let energy = 0;
-                    for (let i = 0; i < unified.length; i++) energy += Math.abs(unified[i]);
-                    const avgEnergy = energy / unified.length;
-
-                    // VAD Gating: Only send if energy is above threshold
-                    if (avgEnergy > 0.01) {
-                        // Only trigger ActivityStart on significant speech (0.02) to avoid cutting agent off
-                        if (!hasSentActivityStartRef.current && avgEnergy > 0.02) {
-                            console.log("Significant speech detected: sending ActivityStart");
-
-                            wsRef.current.send(JSON.stringify({
-                                realtime_input: {
-                                    activity_start: {}
-                                }
-                            }));
-                            hasSentActivityStartRef.current = true;
-                            setIsWaitingForSubmit(true);
+                    // Send all media chunks to allow server-side VAD to work correctly
+                    wsRef.current.send(JSON.stringify({
+                        realtime_input: {
+                            media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
                         }
-
-                        if (Math.random() < 0.05) {
-                            console.log(`Mic active: sending ${base64.length} bytes, avg energy: ${avgEnergy.toFixed(4)}`);
-                        }
-                        wsRef.current.send(JSON.stringify({
-                            realtime_input: {
-                                media_chunks: [{ data: base64, mime_type: "audio/pcm" }]
-                            }
-                        }));
-                    } else if (Math.random() < 0.01) {
-                        console.log(`Gating mic: avg energy ${avgEnergy.toFixed(4)} too low`);
-                    }
+                    }));
                 }
             };
 
@@ -692,29 +634,6 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
                 >
                     {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
                 </button>
-
-                {isWaitingForSubmit && !isMuted && (
-                    <button
-                        onClick={submitResponse}
-                        style={{
-                            padding: '12px 24px',
-                            background: '#22c55e',
-                            color: 'white',
-                            borderRadius: '24px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            animation: 'fadeInUp 0.3s ease-out',
-                            boxShadow: '0 4px 12px rgba(34,197,94,0.2)'
-                        }}
-                    >
-                        Submit Response
-                    </button>
-                )}
             </div>
 
             <style jsx>{`

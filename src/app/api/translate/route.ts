@@ -13,8 +13,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ translations: [] });
         }
 
-        const genAI = getGeminiClient();
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = getGeminiClient();
 
         const prompt = `You are an expert translator. 
 Translate the following array of strings from ${sourceLang} into exactly the same number of English strings.
@@ -30,7 +29,8 @@ Return ONLY a perfectly formatted JSON object with a single "translations" key c
 DO NOT wrap the response in markdown blocks.`;
 
         const result = await model.generateContent(prompt);
-        const text = result.response.text();
+        const response = result.response;
+        const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
         let jsonStr = text.trim();
         // Remove markdown formatting if the model still included it

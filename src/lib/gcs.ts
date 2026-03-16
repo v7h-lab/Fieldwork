@@ -2,8 +2,11 @@ import { Storage } from '@google-cloud/storage';
 
 function getStorage() {
     const key = process.env.GCS_SERVICE_ACCOUNT_KEY;
-    if (!key) throw new Error('GCS_SERVICE_ACCOUNT_KEY not configured');
-    return new Storage({ credentials: JSON.parse(key) });
+    if (key) {
+        return new Storage({ credentials: JSON.parse(key) });
+    }
+    // Ambient credentials (ADC) for Cloud Run
+    return new Storage();
 }
 
 function getBucket() {

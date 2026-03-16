@@ -147,15 +147,31 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
         source.start();
     }, []);
 
-    const connect = useCallback(() => {
-        const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-        console.log('Attempting to connect to Gemini Live...', apiKey ? 'API Key found' : 'API Key MISSING');
-        if (!apiKey) {
-            console.error('Gemini API key missing');
+    const connect = useCallback(async () => {
+        // Fetch short-lived token from our bridge
+        let token = '';
+        let project = '';
+        try {
+            const resp = await fetch('/api/vertex-token');
+            const data = await resp.json();
+            token = data.token;
+            project = data.projectId;
+        } catch (e) {
+            console.error('Failed to fetch Vertex token:', e);
             return null;
         }
 
-        const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+        if (!token) {
+            console.error('No token received from backend');
+            return null;
+        }
+
+        // Vertex AI Multimodal Live API Regional Endpoint
+        const location = 'us-central1';
+        const model = 'gemini-live-2.5-flash-native-audio';
+        const baseUrl = `wss://${location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`;
+        const url = `${baseUrl}?access_token=${token}`;
+
         const ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
@@ -165,26 +181,24 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             setIsConnected(true);
             const setupMsg = {
                 setup: {
-                    model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+                    model: `projects/${project}/locations/${location}/publishers/google/models/${model}`,
                     generation_config: {
-                        response_modalities: ["AUDIO"],
+                        response_modalities: ["AUDIO", "TEXT"],
                         speech_config: {
-                            voice_config: { prebuilt_voice_config: { voice_name: "Aoede" } }
-                        },
-                        thinking_config: { include_thoughts: false }
-                    },
-                    input_audio_transcription: {
-                        config: {
-                            language_code: lang
+                            voice_config: { prebuilt_voice_config: { voice_name: "Puck" } }
                         }
                     },
-                    output_audio_transcription: {}, // Enable transcription of model output
+                    input_audio_transcription: {},
+                    output_audio_transcription: {},
                     realtime_input_config: {
                         automatic_activity_detection: {
-                            disabled: true
+                            disabled: false
                         }
                     },
-                    system_instruction: { role: "system", parts: [{ text: systemInstructionsRef.current }] }
+                    system_instruction: { 
+                        role: "system", 
+                        parts: [{ text: systemInstructionsRef.current }] 
+                    }
                 }
             };
             try {
@@ -213,7 +227,7 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
             // If primary language is en-US, strip non-Latin/basic punctuation characters
             // Specifically targeting Devanagari (Hindi) leakage: \u0900-\u097F
             if (lang.startsWith('en')) {
-                return text.replace(/[\u0900-\u097F]/g, '').trim();
+                return text.replace(/[\u0900-\u097F]/g, '');
             }
             // If primary language is hi-IN, we allow Devanagari
             return text;
@@ -443,22 +457,33 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
     const startMic = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-
-            try {
-                await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
-            } catch (e) {
-                console.error('Failed to load AudioWorklet module:', e);
-                // In some browsers or during re-renders, it might already be loaded
+            
+            if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
             }
 
+            // Ensure AudioWorklet is loaded
+            try {
+                // Next.js static file path
+                await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
+            } catch (e) {
+                // If it fails because it's already added, we can continue
+                console.log('AudioWorklet module adding status:', e);
+            }
+
+            // Verify if processor is actually registered by trying to create a dummy node or just proceeding with a small delay
+            // The browser will throw if it's not ready. 
+            
             let workletNode;
             try {
                 workletNode = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
             } catch (e) {
-                console.error('Failed to create AudioWorkletNode:', e);
-                return;
+                console.error('Failed to create AudioWorkletNode, retrying after delay...', e);
+                // Simple retry mechanism
+                await new Promise(resolve => setTimeout(resolve, 100));
+                workletNode = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
             }
+            
             workletNodeRef.current = workletNode;
 
             const source = audioContextRef.current.createMediaStreamSource(stream);
@@ -552,7 +577,12 @@ export function LiveExperienceUI({ study, participantName, onMessage, onComplete
 
     useEffect(() => {
         if (isEnding) return;
-        const ws = connect();
+        
+        let ws: WebSocket | null = null;
+        connect().then(socket => {
+            ws = socket;
+        });
+        
         startMic();
         return () => {
             if (ws) ws.close();

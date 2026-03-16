@@ -9,8 +9,7 @@ export async function POST(request: NextRequest) {
 
     const typeLabel = RESEARCH_TYPES[researchType as ResearchType]?.label || researchType;
 
-    const genAI = getGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGeminiClient();
 
     const prompt = `You are an expert UX researcher. Generate a complete research interview guide for the following study.
 
@@ -49,7 +48,8 @@ Guidelines:
 Return ONLY valid JSON, no markdown, no explanation.`;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const response = result.response;
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     // Extract JSON from response
     let jsonStr = text;

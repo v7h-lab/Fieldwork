@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'No text provided' }, { status: 400 });
         }
 
-        const apiKey = process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY;
+        const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY;
         if (!apiKey) {
             return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
         }

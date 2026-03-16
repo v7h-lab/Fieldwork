@@ -1,4 +1,5 @@
 import { LlmAgent, FunctionTool, InMemoryRunner } from '@google/adk';
+import { VertexAI } from '@google-cloud/vertexai';
 import { z } from 'zod';
 import type { ResearchGuide, MainQuestion } from './types';
 import { SUPPORTED_LANGUAGES } from './types';

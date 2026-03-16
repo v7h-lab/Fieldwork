@@ -6,8 +6,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { studyType, goals, responses } = body;
 
-    const genAI = getGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = getGeminiClient();
 
     const prompt = `You are a senior UX researcher analyzing interview responses from a ${studyType} study.
 
@@ -57,7 +56,8 @@ Guidelines:
 Return ONLY valid JSON.`;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const response = result.response;
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     let jsonStr = text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
